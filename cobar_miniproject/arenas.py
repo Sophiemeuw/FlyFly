@@ -108,8 +108,8 @@ class OdorTargetOnlyArena(ObstacleOdorArena):
         )
 
         # set the floor white with full alpha
-        self.root_element.find_all("texture")[0].rgb1 = (1, 1, 1)
-        self.root_element.find_all("texture")[0].rgb2 = (1, 1, 1)
+        #self.root_element.find_all("texture")[0].rgb1 = (1, 1, 1)
+        #self.root_element.find_all("texture")[0].rgb2 = (1, 1, 1)
 
     def step(self, dt, physics):
         fly_pos = physics.bind(self.fly._body_sensors[0]).sensordata[:2].copy()

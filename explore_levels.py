@@ -2,7 +2,8 @@ import argparse
 import cv2
 import tqdm
 from cobar_miniproject import levels
-from cobar_miniproject.keyboard_controller import KeyBoardController
+from submission import Controller
+#from cobar_miniproject.keyboard_controller import KeyBoardController
 from cobar_miniproject.cobar_fly import CobarFly
 from cobar_miniproject.vision import (
     get_fly_vision,
@@ -18,7 +19,7 @@ ONLY_CAMERA = 0
 WITH_FLY_VISION = 1
 WITH_RAW_VISION = 2
 
-VISUALISATION_MODE = WITH_FLY_VISION
+VISUALISATION_MODE = ONLY_CAMERA
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the fly simulation.")
@@ -60,7 +61,8 @@ if __name__ == "__main__":
         arena=level_arena,
     )
 
-    controller = KeyBoardController(timestep=timestep, seed=seed)
+    controller = Controller(timestep=timestep, seed=seed) 
+    #controller = KeyBoardController(timestep=timestep, seed=seed)
 
     # run cpg simulation
     obs, info = sim.reset()
