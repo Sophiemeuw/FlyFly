@@ -39,8 +39,7 @@ You may run the `check_submission.py` script to check if your submission folder 
 ```bash
 conda activate flygym
 python check_submission.py <submission_folder>
-<<<<<<< HEAD
-```
+
 
 ## Creating a private copy while keeping track of the changes from the public repository
 1. Clone this repository
@@ -66,3 +65,5 @@ git fetch upstream
 git merge upstream/main
 ```
 
+=======
+```
