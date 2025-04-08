@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Miniproject for BIOENG-456: Controlling behavior in animals and robots
 
 Welcome to the Miniproject for BIOENG-456!
@@ -64,3 +65,6 @@ git push -u origin main
 git fetch upstream
 git merge upstream/main
 ```
+=======
+# FlyFly
+>>>>>>> 77f68a6 (Initial commit)
