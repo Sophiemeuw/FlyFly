@@ -1,5 +1,8 @@
 from flygym import Fly
 import numpy as np
+from pathlib import Path
+import imageio
+from copy import deepcopy
 
 
 def get_fly_vision(fly: Fly):
@@ -47,3 +50,44 @@ def render_image_with_vision(image: np.ndarray, vision: np.ndarray):
         )
 
     return np.vstack((vision, image))
+
+class RawVideoHandler:
+    def __init__(self, file_name_prefix):
+        self.save_path = Path("outputs")/f"{file_name_prefix}_raw_vision.mp4"
+        self.save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def __enter__(self): 
+        self.writer = imageio.get_writer(self.save_path, fps=24) # unsure about fps
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.writer.close()
+    
+    def handle_raw_video(self, info, obs, delete_video_from_dicts=True): 
+        if delete_video_from_dicts: 
+            frame = deepcopy(info["raw_vision"])
+            del info["raw_vision"]
+            del obs["raw_vision"]
+        else:
+            frame = info["raw_vision"]
+    
+
+        frame = frame.astype(np.uint8)
+        frame = np.concatenate((frame[0, :, :, :], frame[1, :, :, :]), axis=1)
+
+        # This is to make imageio stop complaining:
+        # input image is not divisible by macro_block_size=16, resizing from (900, 514) to (912, 528) to ensure video compatibility with most codecs 
+        # and players. To prevent resizing, make your input image divisible by the macro_block_size or set the macro_block_size to 1 
+        # (risking incompatibility).
+        if frame.shape[0] % 16 != 0 or frame.shape[1] % 16 != 0: 
+            new_height = (frame.shape[0] + 15) // 16 * 16
+            new_width = (frame.shape[1] + 15) // 16 * 16
+            frame = np.pad(
+                frame,
+                ((0, new_height - frame.shape[0]), (0, new_width - frame.shape[1]), (0, 0)),
+                mode='constant',
+                constant_values=0
+            )
+
+        self.writer.append_data(frame)
+
+    
