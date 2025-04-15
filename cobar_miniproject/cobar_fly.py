@@ -343,8 +343,9 @@ class CobarFly(Fly):
             self._last_observation = obs
             info["neck_actuation"] = self._last_neck_actuation
 
-        # add some extra fields to the obs so the controller can access them
-        obs["vision_updated"] = info["vision_updated"]
+        # add some extra fields to the obs so the controller can access 
+        if self.enable_vision:
+            obs["vision_updated"] = info["vision_updated"]
         obs["reached_odour"] = (
             getattr(sim.arena, "state", "exploring") == "returning"
         )  # this is only relevant for the path integration
