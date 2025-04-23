@@ -29,6 +29,7 @@ class Controller(BaseController):
         # min and max range of the descending signal
         DELTA_MIN = 0.2 
         DELTA_MAX = 1
+        IMPORTANCE = 0.6 # Odor taxis has lower priority
      
         I_right = ((obs["odor_intensity"][0][1] + obs["odor_intensity"][0][3]))/2
         I_left = ((obs["odor_intensity"][0][0] + obs["odor_intensity"][0][2]))/2
@@ -44,63 +45,54 @@ class Controller(BaseController):
             left_descending_signal = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * turning_bias
             right_descending_signal = DELTA_MAX
 
-        return CommandWithImportance(left_descending_signal, right_descending_signal, 0.5)
+        return CommandWithImportance(left_descending_signal, right_descending_signal, IMPORTANCE)
     
     def pillar_avoidance(self, obs: Observation, odor_taxis_command: CommandWithImportance) -> CommandWithImportance:
-        """
-        Detect obstacles using panoramic vision and adjust turning to avoid dark (close) objects.
-        """
+        #if not obs.get("vision_updated", False):
+            #return odor_taxis_command  # skip if vision wasn't updated
+        #Parameters :
+        MAX_DELTA = 1.0
+        MIN_DELTA = 0.2
+        IMPORTANCE = 0.6  # Avoidance has higher priority
+
         vision = obs["vision"]  # shape: (2, 721, 2)
-        # Average across yellow/pale channels → shape: (2, 721)
-        brightness_per_eye = np.mean(vision, axis=2)
+        brightness = np.mean(vision, axis=2)  # shape: (2, 721)
+
+        # Weight ommatidia: front gets higher weight
+        weights = np.linspace(1.0, 0.5, 721)
+
+        left_weighted = np.sum(brightness[0] * weights)
+        right_weighted = np.sum(brightness[1] * weights)
+
+        # Compute turning signal based on difference
+        diff = left_weighted - right_weighted
+        gain = 3.0
+        turn_signal = np.tanh(gain * diff)
+
+        # Adjust descending signals
         
-        # Concatenate both eyes → shape: (1442,)
-        panoramic_vision = np.concatenate(brightness_per_eye, axis=0)
+        left_signal = MAX_DELTA
+        right_signal = MAX_DELTA
 
-        # Divide into 5 equal regions
-        region_size = panoramic_vision.shape[0] // 5
-        brightness = []
-        for i in range(5):
-            region = panoramic_vision[i * region_size:(i + 1) * region_size]
-            brightness.append(np.mean(region))
-
-        # Normalize and invert to get "darkness"
-        brightness = np.array(brightness)
-        max_brightness = np.max(brightness)
-        darkness = 1.0 - brightness / (max_brightness + 1e-6)
-        darkness = np.clip(darkness, 0, 1)
-
-        # Compute repulsion: steer away from dark zones
-        left = darkness[0] + 0.5 * darkness[1]
-        right = darkness[4] + 0.5 * darkness[3]
-        repulsion = right - left  # >0 → steer left, <0 → steer right
-
-        avoidance_turn = np.tanh(repulsion * 2.0)  # Gain controls sharpness
-
-        # Create avoidance descending signals
-        DELTA_MIN = 0.2
-        DELTA_MAX = 1.0
-        if avoidance_turn > 0:
-            left_signal = DELTA_MAX
-            right_signal = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * avoidance_turn
+        if turn_signal > 0:
+            # Obstacle on the left → turn right
+            left_signal = MAX_DELTA - (MAX_DELTA - MIN_DELTA) * abs(turn_signal)
         else:
-            right_signal = DELTA_MAX
-            left_signal = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * abs(avoidance_turn)
+            # Obstacle on the right → turn left
+            right_signal = MAX_DELTA - (MAX_DELTA - MIN_DELTA) * abs(turn_signal)
 
-        # Weight the avoidance vs odor commands
-        avoidance_importance = float(np.max(darkness))
-        odor_importance = 1.0 - avoidance_importance
+        # Combine with odor taxis command via IMPORTANCE weighting
+        
 
-        combined_left = (
-            odor_importance * odor_taxis_command.left_descending_signal
-            + avoidance_importance * left_signal
+        left_descending_signal = (
+            IMPORTANCE * left_signal + (1 - IMPORTANCE) * odor_taxis_command.left_descending_signal
         )
-        combined_right = (
-            odor_importance * odor_taxis_command.right_descending_signal
-            + avoidance_importance * right_signal
+        right_descending_command = (
+            IMPORTANCE * right_signal + (1 - IMPORTANCE) * odor_taxis_command.right_descending_signal
         )
 
-        return CommandWithImportance(combined_left, combined_right, 1.0)
+        return CommandWithImportance(left_descending_signal, right_descending_command, IMPORTANCE)
+
 
     def ball_avoidance(self, obs: Observation) -> CommandWithImportance:
         return CommandWithImportance(0, 0, 0)
@@ -109,15 +101,13 @@ class Controller(BaseController):
         self.time = self.time + self.timestep
         # Get the odor taxis command
         odor_taxis_command = self.get_odor_taxis(obs)
-        #get the pillar avoidance command
-        pillar_avoidance_command = self.pillar_avoidance(obs, odor_taxis_command)
+        # Get combined pillar avoidance + odor taxis command
+        combined_command = self.pillar_avoidance(obs, odor_taxis_command)
 
-
-        action=np.array([
-            odor_taxis_command.left_descending_signal,
-            odor_taxis_command.right_descending_signal,
-            pillar_avoidance_command.left_descending_signal,
-            pillar_avoidance_command.right_descending_signal,
+        # Only use the 2 blended signals
+        action = np.array([
+            combined_command.left_descending_signal,
+            combined_command.right_descending_signal,
         ])
 
         joint_angles, adhesion = step_cpg(
