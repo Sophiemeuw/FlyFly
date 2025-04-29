@@ -56,7 +56,7 @@ class Controller(BaseController):
         MAX_DELTA = 1.0
         MIN_DELTA = 0.2
         IMPORTANCE = 0.7
-        GAIN = 5000  # Increased sensitivity
+        GAIN = 15500  # Increased sensitivity
 
         vision = obs["vision"]  # shape: (2, 721, 2)
         brightness = np.mean(vision, axis=2)  # shape: (2, 721)
