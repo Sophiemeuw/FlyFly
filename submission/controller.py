@@ -3,6 +3,11 @@ import random
 from cobar_miniproject.base_controller import Action, BaseController, Observation
 from .utils import get_cpg, step_cpg
 from typing import NamedTuple
+import itertools
+import numpy as np 
+
+
+
 
 
 class CommandWithImportance(NamedTuple):
@@ -178,6 +183,29 @@ class Controller(BaseController):
         
 
     def ball_avoidance(self, obs: Observation) -> CommandWithImportance:
+        # Process current vision
+        left_eye, right_eye = self.process_vision(obs["vision"])
+        
+        if self.prev_vision_data is None:
+            self.prev_vision_data = (left_eye, right_eye)
+            return CommandWithImportance(0, 0, 0)
+        
+        prev_left, prev_right = self.prev_vision_data
+        
+        # Detect motion using temporal difference
+        left_motion = np.mean(np.abs(left_eye - prev_left)) > self.motion_threshold
+        right_motion = np.mean(np.abs(right_eye - prev_right)) > self.motion_threshold
+        
+        # Store current vision for next frame
+        self.prev_vision_data = (left_eye, right_eye)
+        
+        # Generate avoidance command
+        if left_motion or right_motion:
+            if left_motion > right_motion:
+                return CommandWithImportance(0.2, 1.0, 1.0)  # Turn right
+            else:
+                return CommandWithImportance(1.0, 0.2, 1.0)  # Turn left
+                
         return CommandWithImportance(0, 0, 0)
 
     def get_actions(self, obs: Observation) -> Action:
@@ -276,6 +304,7 @@ class Controller(BaseController):
         return self.quit or self.homing_done
 
     def reset(self, **kwargs):
+        """Clean reset of all state"""
         self.cpg_network.reset()
         self.escape_timer = 0
         self.turn_timer = 0
