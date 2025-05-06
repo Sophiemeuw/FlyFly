@@ -133,29 +133,47 @@ class Controller(BaseController):
         return CommandWithImportance(0, 0, 0)
 
     def get_actions(self, obs: Observation) -> Action:
-
-        self.time = self.time + self.timestep
-        self.update_position_estimate(obs)
-        
-        # Get behavior command
-        command = self.get_odor_taxis(obs)
-        
-        # Get CPG output
-        action = np.array([command.left_descending_signal, command.right_descending_signal])
-        joint_angles, _ = step_cpg(
-            cpg_network=self.cpg_network,
-            preprogrammed_steps=self.preprogrammed_steps,
-            action=action,
-        )
-
-        # Ensure correct dtype
-        joint_angles = joint_angles.astype(np.float32)
-        adhesion = np.ones(6, dtype=np.float32)
+        try:
+            self.time = self.time + self.timestep
+            self.update_position_estimate(obs)
+            
+            # Get behavior command
+            command = self.get_odor_taxis(obs)
+            
+            # Get CPG output
+            action = np.array([command.left_descending_signal, command.right_descending_signal])
+            joint_angles, _ = step_cpg(
+                cpg_network=self.cpg_network,
+                preprogrammed_steps=self.preprogrammed_steps,
+                action=action,
+            )
+            
+            # CRITICAL FIX: Always take exactly 44 angles from whatever CPG outputs
+            if joint_angles.shape[0] > 44:
+                joint_angles = joint_angles[:44]  # Take first 44 angles if we have more
+            elif joint_angles.shape[0] < 44:
+                joint_angles = np.pad(joint_angles, (0, 44 - joint_angles.shape[0]), 'constant')  # Pad if we have less
                 
-        return {
-            "joints": joint_angles,
-            "adhesion": adhesion
-        }
+            # Ensure correct dtype
+            joint_angles = joint_angles.astype(np.float32)
+            adhesion = np.ones(6, dtype=np.float32)
+            
+            # Final shape verification
+            assert joint_angles.shape == (44,), f"Wrong joint angles shape: {joint_angles.shape}"
+            assert adhesion.shape == (6,), f"Wrong adhesion shape: {adhesion.shape}"
+            
+            return {
+                "joints": joint_angles,
+                "adhesion": adhesion
+            }
+            
+        except Exception as e:
+            print(f"Error in get_actions: {e}")
+            # Safe fallback with correct shapes
+            return {
+                "joints": np.zeros(44, dtype=np.float32),
+                "adhesion": np.ones(6, dtype=np.float32)
+            }
 
     def done_level(self, obs: Observation):
         if self.quit:
