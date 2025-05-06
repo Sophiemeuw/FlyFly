@@ -60,6 +60,10 @@ class EMDDirection(IntEnum):
     LEFT = 3
     RIGHT = 4
 
+class RectificationType(IntEnum): 
+    ON = 1
+    OFF = 2
+
 
 class LoomDetector: 
     def __init__(self, input_size: tuple, debug=False): 
@@ -92,11 +96,23 @@ class LoomDetector:
     def __exit__(self, exc_type, exc_value, traceback):
         if self.debug:
             self.rvh.__exit__(exc_type, exc_value, traceback)
-
-            
-
         
     
+    def edge_rectification(self, input: np.ndarray, threshold: float, type: RectificationType): 
+        input = input.copy()
+        pre_shape = input.shape
+        flattened = input.ravel()
+
+        if type == RectificationType.ON: 
+            pattern = flattened > threshold
+        elif type == RectificationType.OFF:
+            pattern = flattened < threshold
+        
+        flattened[pattern] = np.abs(flattened[pattern] - threshold)
+        flattened[~pattern] = np.zeros(np.count_nonzero(~pattern))
+
+        return flattened.reshape(pre_shape)
+        
 
     def process(self, images: np.ndarray) -> float:
         PROCESS_PERIOD = 1
@@ -113,27 +129,30 @@ class LoomDetector:
         
         self.initialized = True
 
-        
-        if self.frames_recvd % PROCESS_PERIOD == 0: 
-            self.frames_recvd = 0
-            self.frame_buffer.appendleft(frame)
+        self.frames_recvd = 0
+        self.frame_buffer.appendleft(frame)
 
-            # first order hpf in pipeline 
-            self.hpf_history.appendleft(
-                self.hpf_b[0]*images + self.hpf_b[1]*self.frame_buffer[1] - self.hpf_a[1] * self.hpf_history[0]
-            )          
-        
+        hpf = self.hpf_b[0]*images + self.hpf_b[1]*self.frame_buffer[1] - self.hpf_a[1] * self.hpf_history[0]
+
+        # first order hpf in pipeline 
+        self.hpf_history.appendleft(hpf)
+
+        on_rect = self.edge_rectification(hpf, 0, RectificationType.ON)
+        off_rect = self.edge_rectification(hpf, 1, RectificationType.OFF)
+                
+    
 
 
-            if self.debug:
-                self._save_pipeline_snapshots()
+        if self.debug:
+            self.rvh.add_frame(self.frame_buffer[0])
+            self.rvh.add_frame(self.hpf_history[0])
+            self.rvh.add_frame(on_rect)
+            self.rvh.add_frame(off_rect)
+            self.rvh.commit_frame()
         # else: 
         #     pass # maybe log
     
-    def _save_pipeline_snapshots(self):
-        self.rvh.add_frame(self.frame_buffer[0])
-        self.rvh.add_frame(self.hpf_history[0])
-        self.rvh.commit_frame()
+        
 
     
         
@@ -146,9 +165,13 @@ if __name__ == "__main__":
     with open("/home/niel/Documents/repos/controlling-behaviour/flyfly/.stuff/vid_hist.pkl", "rb") as f:
         data = pickle.load(f)
     
+
+    
     ld = LoomDetector((2, 721, 2), debug=True)
     with ld: 
-        for frame in data["vision"]: 
+        for i, frame in enumerate(data["vision"]):
+            if i < 1000: 
+                continue 
             ld.process(frame)
     
 
