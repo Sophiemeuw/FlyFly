@@ -186,8 +186,8 @@ class CobarFly(Fly):
     def get_observation(self, sim: Simulation):
         # if we're running the fly in debug mode (for development) it will return all raw observations
         # otherwise, it will return only a reduced observation space with egocentric observations
-        if self.debug:
-            return super().get_observation(sim)
+        # if self.debug:
+        #     return super().get_observation(sim)
 
         physics = sim.physics
         actuated_joint_sensordata = physics.bind(
@@ -285,6 +285,9 @@ class CobarFly(Fly):
             "heading": fly_angle.astype(np.float32),
             "velocity": velocities_relative.astype(np.float32),
         }
+        if self.debug:
+            debugobs = super().get_observation(sim)
+            obs["fly"] = debugobs["fly"]
 
         if self.enable_olfaction:
             antennae_pos = physics.bind(self._antennae_sensors).sensordata

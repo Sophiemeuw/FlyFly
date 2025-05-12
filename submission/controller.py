@@ -8,12 +8,15 @@ from typing import NamedTuple
 class CommandWithImportance(NamedTuple):
     left_descending_signal: float
     right_descending_signal: float
-    importance: float  # 0 -> 1
+    importance: float  # 0->1
 
 
 class Controller(BaseController):
     def __init__(self, timestep=1e-4, seed=0):
         from flygym.examples.locomotion import PreprogrammedSteps
+
+        self.position = np.array([0.0, 0.0])
+        self.position_trace = []
 
         super().__init__()
         self.quit = False
@@ -22,193 +25,165 @@ class Controller(BaseController):
         self.timestep = timestep
         self.time = 0
 
+        # Data storage
+        self.joint_angles_over_time = []
+        self.leg_positions_over_time = []
+
         # Path integration state
-        self.start_pos = np.array([0.0, 0.0])  # Save starting position
-        self.internal_pos = np.array([0.0, 0.0])
-        self.odor_source_pos = None
-        self.odor_found = False
-        self.current_heading = 0.0
+        self.leg_stance_history = [False] * 6
+        self.leg_stance_start_positions = [None] * 6
+        self.leg_displacements = [[] for _ in range(6)]
+        self.leg_displacement_used = [0] * 6  # <-- keep track of used displacements
+
+        # Heading estimation A CHANGER 
+        self.heading = 0.0
+        self.heading_gain = 0.04
+        self.max_heading_change = np.deg2rad(5)
+        self.last_delta_heading = 0.0
+        self.smooth_alpha = 0.8  # exponential smoothing factor
+
+        # Logging
+        self.heading_trace = []
 
     def get_odor_taxis(self, obs: Observation) -> CommandWithImportance:
-        ODOR_GAIN = -500
-        DELTA_MIN = 0.4
-        DELTA_MAX = 1.6
-        IMPORTANCE = 0.5
-
-        I_right = (obs["odor_intensity"][0][1] + obs["odor_intensity"][0][3]) / 2
-        I_left = (obs["odor_intensity"][0][0] + obs["odor_intensity"][0][2]) / 2
-        asymmetry = (I_left - I_right) / ((I_left + I_right + 1e-6) / 2)
-        s = asymmetry * ODOR_GAIN
-        turning_bias = np.abs(np.tanh(s))
-
+        # unchanged odor taxis logic
+        ODOR_GAIN, DELTA_MIN, DELTA_MAX, IMPORTANCE = -500, 0.2, 1.0, 0.5
+        I = obs["odor_intensity"][0]
+        I_left = (I[0] + I[2]) / 2
+        I_right = (I[1] + I[3]) / 2
+        asym = (I_left - I_right) / ((I_left + I_right + 1e-6) / 2)
+        s = asym * ODOR_GAIN
+        bias = abs(np.tanh(s))
         if s > 0:
-            right_descending_signal = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * turning_bias
-            left_descending_signal = DELTA_MAX
+            right = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * bias
+            left = DELTA_MAX
         else:
-            left_descending_signal = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * turning_bias
-            right_descending_signal = DELTA_MAX
+            left = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * bias
+            right = DELTA_MAX
+        return CommandWithImportance(left, right, IMPORTANCE)
 
-        return CommandWithImportance(left_descending_signal, right_descending_signal, IMPORTANCE)
+    def estimate_heading_change(self):
+        # Fixed tripod: legs [0,3,4] vs [1,2,5]
+        # Ce code fonctionne donc bien sur le tripod gait 
+        left_indices = [0, 3, 4]
+        right_indices = [1, 2, 5]
+        left_disp, right_disp = [], []
 
-    def pillar_avoidance(self, obs: Observation, odor_taxis_command: CommandWithImportance) -> CommandWithImportance:
-        MAX_DELTA = 1.4
-        MIN_DELTA = 0.2
-        IMPORTANCE = 0.7
-        GAIN = 15500
+        for i in left_indices:
+            if self.leg_displacements[i]:
+                d = self.leg_displacements[i][-1][0]
+                if abs(d) > 1e-4:
+                    left_disp.append(d)
+        for i in right_indices:
+            if self.leg_displacements[i]:
+                d = self.leg_displacements[i][-1][0]
+                if abs(d) > 1e-4:
+                    right_disp.append(d)
 
-        vision = obs["vision"]
-        brightness = np.mean(vision, axis=2)
-        center = 360
-        std = 120
-        weights = np.exp(-((np.arange(721) - center) ** 2) / (2 * std**2))
+        if left_disp and right_disp:
+            raw = (np.mean(right_disp) - np.mean(left_disp)) * self.heading_gain
+            raw = np.clip(raw, -self.max_heading_change, self.max_heading_change)
+            # exponential smoothing
+            delta = self.smooth_alpha * raw + (1 - self.smooth_alpha) * self.last_delta_heading
+            self.last_delta_heading = delta
+            return delta
+        return 0.0
 
-        left_weighted = np.sum(brightness[0] * weights)
-        right_weighted = np.sum(brightness[1] * weights)
-
-        left_front = brightness[0, 620:]
-        right_front = brightness[1, :100]
-        front_overlap_brightness = np.mean(np.concatenate([left_front, right_front]))
-
-        left_side_brightness = np.mean(brightness[0, 500:620])
-        right_side_brightness = np.mean(brightness[1, 100:220])
-
-        if (
-            front_overlap_brightness < 5
-            or left_side_brightness < 3
-            or right_side_brightness < 3
-        ) and np.linalg.norm(obs["velocity"][:2]) < 0.2:
-
-            if left_side_brightness < right_side_brightness:
-                left_signal = 0.3
-                right_signal = 1.0
-            elif right_side_brightness < left_side_brightness:
-                left_signal = 1.0
-                right_signal = 0.3
-            else:
-                if random.random() < 0.5:
-                    left_signal = 1.0
-                    right_signal = 0.3
-                else:
-                    left_signal = 0.3
-                    right_signal = 1.0
-
-            return CommandWithImportance(
-                IMPORTANCE * left_signal + (1 - IMPORTANCE) * odor_taxis_command.left_descending_signal,
-                IMPORTANCE * right_signal + (1 - IMPORTANCE) * odor_taxis_command.right_descending_signal,
-                IMPORTANCE
-            )
-
-        diff = left_weighted - right_weighted
-        turn_signal = np.tanh(GAIN * diff)
-        turn_signal += np.random.uniform(-0.05, 0.05)
-
-        left_signal = MAX_DELTA
-        right_signal = MAX_DELTA
-        if turn_signal > 0:
-            left_signal = MAX_DELTA - (MAX_DELTA - MIN_DELTA) * abs(turn_signal)
-        else:
-            right_signal = MAX_DELTA - (MAX_DELTA - MIN_DELTA) * abs(turn_signal)
-
-        left_descending_signal = (
-            IMPORTANCE * left_signal + odor_taxis_command.importance * odor_taxis_command.left_descending_signal
-        )
-        right_descending_signal = (
-            IMPORTANCE * right_signal + odor_taxis_command.importance * odor_taxis_command.right_descending_signal
-        )
-
-        return CommandWithImportance(left_descending_signal, right_descending_signal, IMPORTANCE)
-
-    def path_integration_return(self) -> CommandWithImportance:
-        if not self.odor_found:
-            return CommandWithImportance(0, 0, 0)
-
-        # Go back to starting position instead of odor source
-        vector_to_start = self.start_pos - self.internal_pos
-        print(f"[DEBUG] Returning to start. Vector: {vector_to_start}, Current pos: {self.internal_pos}, Start pos: {self.start_pos}")
-        angle_to_start = np.arctan2(vector_to_start[1], vector_to_start[0])
-        angle_diff = angle_to_start - self.current_heading
-        angle_diff = (angle_diff + np.pi) % (2 * np.pi) - np.pi
-
-        TURN_GAIN = 5
-        s = np.tanh(angle_diff * TURN_GAIN)
-
-        DELTA_MIN = 0.2
-        DELTA_MAX = 1.4
-        if s > 0:
-            right_signal = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * s
-            left_signal = DELTA_MAX
-        else:
-            left_signal = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * -s
-            right_signal = DELTA_MAX
-
-        return CommandWithImportance(left_signal, right_signal, 0.6)
+    def update_position(self, stance_phases):
+        # Ne pas réutiliser des déplacements déjà comptés
+        total_disp = np.zeros(2)
+        count = 0
+        for i in range(6):
+            used_idx = self.leg_displacement_used[i]
+            disps = self.leg_displacements[i]
+            while used_idx < len(disps):
+                disp = disps[used_idx][:2]
+                if np.linalg.norm(disp) > 1e-4:
+                    total_disp += disp
+                    count += 1
+                self.leg_displacement_used[i] += 1
+                used_idx += 1
+        if count == 0:
+            return
+        avg_disp = total_disp / count
+        # Foot displacement is opposite to body movement: invert
+        rot = np.array([
+            [np.cos(self.heading), -np.sin(self.heading)],
+            [np.sin(self.heading),  np.cos(self.heading)]
+        ])
+        dw = -rot.dot(avg_disp)
+        self.position += dw
+        self.position_trace.append(self.position.copy())
+        print(f"Estimated position: {self.position} (delta_world={dw})")
 
     def get_actions(self, obs: Observation) -> Action:
         self.time += self.timestep
+        odor = self.get_odor_taxis(obs)
+        action = np.array([odor.left_descending_signal, odor.right_descending_signal])
+        joint_angles, adhesion = step_cpg(self.cpg_network, self.preprogrammed_steps, action)
+        self.joint_angles_over_time.append(joint_angles)
+        legs = obs["end_effectors"]
+        forces = obs["contact_forces"]
+        stance = [np.linalg.norm(f) > 3 for f in forces]
 
-        # Update heading and estimate position
-        if self.time == self.timestep:
-            self.start_pos = self.internal_pos.copy()  # Save actual starting position once
-        self.current_heading = obs["heading"]
-        velocity = np.array(obs["velocity"]).flatten()
-        print(f"[DEBUG] velocity: {velocity}")
-        if velocity.shape[0] >= 2:
-            vx, vy = velocity[0], velocity[1]
-        else:
-            vx, vy = 0.0, 0.0
-        vx_global = vx * np.cos(self.current_heading) - vy * np.sin(self.current_heading)
-        vy_global = vx * np.sin(self.current_heading) + vy * np.cos(self.current_heading)
-        self.internal_pos += np.array([vx_global, vy_global]) * self.timestep
-        if "fly" in obs.keys():
-            print(f"[DEBUG] fly: {obs['fly'][0, :]}")
-        print(f"[DEBUG] internal_pos: {self.internal_pos}, heading: {self.current_heading}")
+        for i in range(6):
+            if stance[i] and not self.leg_stance_history[i]:
+                self.leg_stance_start_positions[i] = np.array(legs[i])
+            if not stance[i] and self.leg_stance_history[i]:
+                start = self.leg_stance_start_positions[i]
+                if start is not None:
+                    disp = np.array(legs[i]) - start
+                    self.leg_displacements[i].append(disp)
+                    print(f"Leg {i} displacement during stance: {disp}")
+                self.leg_stance_start_positions[i] = None
+            self.leg_stance_history[i] = stance[i]
 
-        # Store odor source location when found
-        if obs.get("reached_odour", False) and not self.odor_found:
-            print(f"[DEBUG] Odor source reached at position: {self.internal_pos}")
-            self.odor_source_pos = self.internal_pos.copy()
-            self.odor_found = True
+        # Vient de l'approximation des membres. Pas utile pour debug
 
-        # Get behavior commands
-        odor_taxis_command = self.get_odor_taxis(obs)
-        combined_command = self.pillar_avoidance(obs, odor_taxis_command)
-        return_command = self.path_integration_return()
+        dh = self.estimate_heading_change()
+        self.heading = (self.heading + dh + np.pi) % (2 * np.pi) - np.pi
 
-        # Blend final command with weighted importance based on command sources
-        # Increase return_command's influence only when it is active
-        if self.odor_found:
-            weight_return = 0.8
-            weight_combined = 0.6
-        else:
-            weight_return = 0.0
-            weight_combined = 1.0
+        #Utiliser pour verifier les beug
+        # self.heading = obs["heading"]
+        # self.position = np.array(obs["fly"][0][:2])
 
-        left_signal = (
-            weight_combined * combined_command.left_descending_signal + weight_return * return_command.left_descending_signal
-        )
-        right_signal = (
-            weight_combined * combined_command.right_descending_signal + weight_return * return_command.right_descending_signal
-        )
+        self.update_position(stance)
 
-        action = np.array([left_signal, right_signal])
-
-        joint_angles, adhesion = step_cpg(
-            cpg_network=self.cpg_network,
-            preprogrammed_steps=self.preprogrammed_steps,
-            action=action,
-        )
-
-        return {
-            "joints": joint_angles,
-            "adhesion": adhesion,
-        }
+        print("\n--- Debug Info ---")
+        print(f"Time: {self.time:.4f} | Legs in stance: {sum(stance)}/6")
+        print(f"Stance flags: {stance}")
+        print(f"Estimated heading: {np.rad2deg(self.heading):.2f}°")
+        if "fly" in obs:
+            print(f"True position: {obs['fly'][0][:2]}, True heading: {np.rad2deg(obs['heading']):.2f}°")
+        # log heading
+        self.heading_trace.append(self.heading)
+        return {"joints": joint_angles, "adhesion": adhesion}
 
     def done_level(self, obs: Observation):
-        return self.quit
+        return False
 
     def reset(self, **kwargs):
         self.cpg_network.reset()
-        self.internal_pos = np.array([0.0, 0.0])
-        self.odor_source_pos = None
-        self.odor_found = False
-        self.time = 0
+        self.joint_angles_over_time = []
+        self.leg_positions_over_time = []
+        self.leg_stance_history = [False] * 6
+        self.leg_stance_start_positions = [None] * 6
+        self.leg_displacements = [[] for _ in range(6)]
+        self.leg_displacement_used = [0] * 6
+        self.heading = 0.0
+        self.position = np.array([0.0, 0.0])
+        self.position_trace = []
+        self.last_delta_heading = 0.0
+
+    def print_total_leg_displacements(self):
+        print("\n--- Total leg displacements ---")
+        for i, dlist in enumerate(self.leg_displacements):
+            tot = np.sum(dlist, axis=0) if dlist else np.array([0, 0])
+            print(f"Leg {i}: Total displacement vector = {tot}")
+        print(f"Final estimated position: {self.position}")
+
+
+
+
+
+
