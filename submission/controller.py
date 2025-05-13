@@ -17,6 +17,7 @@ class Controller(BaseController):
 
         self.position = np.array([0.0, 0.0])
         self.position_trace = []
+        self.drift_trace = []  # log drift over time
 
         super().__init__()
         self.quit = False
@@ -40,7 +41,7 @@ class Controller(BaseController):
         self.heading_gain = 0.04
         self.max_heading_change = np.deg2rad(5)
         self.last_delta_heading = 0.0
-        self.smooth_alpha = 0.8  # exponential smoothing factor
+        self.smooth_alpha = 0.6 # exponential smoothing factor
 
         # Logging
         self.heading_trace = []
@@ -124,7 +125,7 @@ class Controller(BaseController):
         self.joint_angles_over_time.append(joint_angles)
         legs = obs["end_effectors"]
         forces = obs["contact_forces"]
-        stance = [np.linalg.norm(f) > 3 for f in forces]
+        stance = [np.linalg.norm(f) > 4 for f in forces]
 
         for i in range(6):
             if stance[i] and not self.leg_stance_history[i]:
@@ -133,6 +134,7 @@ class Controller(BaseController):
                 start = self.leg_stance_start_positions[i]
                 if start is not None:
                     disp = np.array(legs[i]) - start
+                    disp = np.clip(disp, -5, 5)  # Clip displacement to prevent outliers
                     self.leg_displacements[i].append(disp)
                     print(f"Leg {i} displacement during stance: {disp}")
                 self.leg_stance_start_positions[i] = None
@@ -149,12 +151,18 @@ class Controller(BaseController):
 
         self.update_position(stance)
 
-        print("\n--- Debug Info ---")
-        print(f"Time: {self.time:.4f} | Legs in stance: {sum(stance)}/6")
-        print(f"Stance flags: {stance}")
-        print(f"Estimated heading: {np.rad2deg(self.heading):.2f}°")
+        # print("\n--- Debug Info ---")
+        # print(f"Time: {self.time:.4f} | Legs in stance: {sum(stance)}/6")
+        # print(f"Stance flags: {stance}")
+        # print(f"Estimated heading: {np.rad2deg(self.heading):.2f}°")
         if "fly" in obs:
             print(f"True position: {obs['fly'][0][:2]}, True heading: {np.rad2deg(obs['heading']):.2f}°")
+            # log drift
+            true_pos = np.array(obs["fly"][0][:2])
+            est_pos = self.position
+            drift = np.linalg.norm(true_pos - est_pos)
+            self.drift_trace.append(drift)
+
         # log heading
         self.heading_trace.append(self.heading)
         return {"joints": joint_angles, "adhesion": adhesion}
@@ -173,6 +181,7 @@ class Controller(BaseController):
         self.heading = 0.0
         self.position = np.array([0.0, 0.0])
         self.position_trace = []
+        self.drift_trace = []
         self.last_delta_heading = 0.0
 
     def print_total_leg_displacements(self):
@@ -181,9 +190,3 @@ class Controller(BaseController):
             tot = np.sum(dlist, axis=0) if dlist else np.array([0, 0])
             print(f"Leg {i}: Total displacement vector = {tot}")
         print(f"Final estimated position: {self.position}")
-
-
-
-
-
-
