@@ -7,14 +7,15 @@ from pathlib import Path
 import imageio
 from copy import deepcopy
 from flygym.vision import Retina
+from PIL import Image
 
 
 class RawVideoHandler:
-    def __init__(self, file_name_prefix):
+    def __init__(self, file_name_prefix, retina):
         self.save_path = Path("debug")/f"{file_name_prefix}_raw_vision.mp4"
         self.save_path.parent.mkdir(parents=True, exist_ok=True)
-        self.retina = Retina()
         self.frame = None
+        self.retina = retina
 
     def __enter__(self): 
         self.writer = imageio.get_writer(self.save_path, fps=5) # unsure about fps
@@ -54,6 +55,7 @@ class RawVideoHandler:
 
 
 
+
 class EMDDirection(IntEnum): 
     UP = 1
     DOWN = 2
@@ -63,6 +65,7 @@ class EMDDirection(IntEnum):
 class RectificationType(IntEnum): 
     ON = 1
     OFF = 2
+
 
 
 class LoomDetector: 
@@ -83,11 +86,16 @@ class LoomDetector:
         self.hpf_history = deque([np.zeros(input_size)], 1)
 
         self.initialized = False
-
+        self.retina = Retina()
 
         self.debug = debug
+
+        self.kernels = {}
+        for dir in EMDDirection:
+            self.kernels[dir] = self.create_kernel(dir)
+            
         if debug:
-            self.rvh = RawVideoHandler("hpf")
+            self.rvh = RawVideoHandler("hpf", self.retina)
     
     def __enter__(self):
         if self.debug: 
@@ -96,6 +104,28 @@ class LoomDetector:
     def __exit__(self, exc_type, exc_value, traceback):
         if self.debug:
             self.rvh.__exit__(exc_type, exc_value, traceback)
+
+    def create_kernel(self, direction: EMDDirection) -> np.ndarray:
+        # option 1: make a square that encompasses the hex. 
+        # option 2: index map. function that does x, y -> idx
+
+        image = np.zeros(721)
+
+        id_map = self.retina.ommatidia_id_map
+        id_map_shape = id_map.shape
+
+        if direction == EMDDirection.UP: 
+            ids = np.unique(id_map[:id_map_shape[0]//2, :].ravel())
+        elif direction == EMDDirection.LEFT:
+            ids = np.unique(id_map[:, :id_map_shape[1]//2].ravel())
+        elif direction == EMDDirection.RIGHT:
+            ids = np.unique(id_map[:, id_map_shape[1]//2:].ravel())
+        elif direction == EMDDirection.DOWN:
+            ids = np.unique(id_map[id_map_shape[0]//2:, :].ravel())
+
+        ids = ids - 1
+        image[ids] = 1
+        return image
         
     
     def edge_rectification(self, input: np.ndarray, threshold: float, type: RectificationType): 
@@ -120,7 +150,7 @@ class LoomDetector:
 
         self.frames_recvd += 1
 
-        # first, take the image and combine the colour channels (they are useless to us)
+        images[:, :, 0] = images[:, :, 0] + images[:, :, 1] # combine the channels since they are useless to us. 
         
         if not self.initialized and self.frames_recvd < self.frame_buffer.maxlen: 
             # just add the frame to the buffer
@@ -138,16 +168,20 @@ class LoomDetector:
         self.hpf_history.appendleft(hpf)
 
         on_rect = self.edge_rectification(hpf, 0, RectificationType.ON)
-        off_rect = self.edge_rectification(hpf, 1, RectificationType.OFF)
-                
-    
+        off_rect = self.edge_rectification(hpf, 0.05, RectificationType.OFF)
 
+        combined = on_rect + off_rect
 
+        
+           
         if self.debug:
             self.rvh.add_frame(self.frame_buffer[0])
             self.rvh.add_frame(self.hpf_history[0])
-            self.rvh.add_frame(on_rect)
-            self.rvh.add_frame(off_rect)
+            self.rvh.add_frame(combined)
+            self.rvh.add_frame(self.kernels[EMDDirection.LEFT])
+            self.rvh.add_frame(self.kernels[EMDDirection.RIGHT])
+            self.rvh.add_frame(self.kernels[EMDDirection.UP])
+            self.rvh.add_frame(self.kernels[EMDDirection.DOWN])
             self.rvh.commit_frame()
         # else: 
         #     pass # maybe log
@@ -162,7 +196,7 @@ class LoomDetector:
 
 if __name__ == "__main__": 
     import pickle
-    with open("/home/niel/Documents/repos/controlling-behaviour/flyfly/.stuff/vid_hist.pkl", "rb") as f:
+    with open("/home/niel/Documents/repos/controlling-behaviour/flyfly/.stuff/walking_with_threat.pkl", "rb") as f:
         data = pickle.load(f)
     
 
@@ -170,8 +204,6 @@ if __name__ == "__main__":
     ld = LoomDetector((2, 721, 2), debug=True)
     with ld: 
         for i, frame in enumerate(data["vision"]):
-            if i < 1000: 
-                continue 
             ld.process(frame)
     
 
