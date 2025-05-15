@@ -93,7 +93,7 @@ class LoomDetector:
         self.kernels = {}
         for dir in EMDDirection:
             self.kernels[dir] = self.create_kernel(dir)
-            
+
         if debug:
             self.rvh = RawVideoHandler("hpf", self.retina)
     
@@ -105,23 +105,30 @@ class LoomDetector:
         if self.debug:
             self.rvh.__exit__(exc_type, exc_value, traceback)
 
-    def create_kernel(self, direction: EMDDirection) -> np.ndarray:
-        # option 1: make a square that encompasses the hex. 
-        # option 2: index map. function that does x, y -> idx
+    
+    def kernel_to_image(self, kernel: np.ndarray) -> np.ndarray:
+        img = np.zeros((2, 721, 2))
+        img[0, :, 0] = kernel
+        img[1, :, 0] = kernel
+        return img
 
+    def create_kernel(self, direction: EMDDirection, off_dir_start=0.333, off_dir_end=0.666) -> np.ndarray:
         image = np.zeros(721)
 
         id_map = self.retina.ommatidia_id_map
-        id_map_shape = id_map.shape
+        id_map_shape_y, id_map_shape_x = id_map.shape
+
+        off_dir_x_range = (off_dir_start * id_map_shape_x, off_dir_end * id_map_shape_x)
+        off_dir_y_range = (off_dir_start * id_map_shape_y, off_dir_end * id_map_shape_y)
 
         if direction == EMDDirection.UP: 
-            ids = np.unique(id_map[:id_map_shape[0]//2, :].ravel())
+            ids = np.unique(id_map[:id_map_shape_y//2, off_dir_x_range[0]:off_dir_x_range[1]].ravel())
         elif direction == EMDDirection.LEFT:
-            ids = np.unique(id_map[:, :id_map_shape[1]//2].ravel())
+            ids = np.unique(id_map[off_dir_y_range[0]:off_dir_y_range[1], :id_map_shape_x//2].ravel())
         elif direction == EMDDirection.RIGHT:
-            ids = np.unique(id_map[:, id_map_shape[1]//2:].ravel())
+            ids = np.unique(id_map[off_dir_y_range[0]:off_dir_y_range[1], id_map_shape_x//2:].ravel())
         elif direction == EMDDirection.DOWN:
-            ids = np.unique(id_map[id_map_shape[0]//2:, :].ravel())
+            ids = np.unique(id_map[id_map_shape_y//2:, off_dir_x_range[0]:off_dir_x_range[1]].ravel())
 
         ids = ids - 1
         image[ids] = 1
@@ -172,16 +179,12 @@ class LoomDetector:
 
         combined = on_rect + off_rect
 
-        
+
            
         if self.debug:
             self.rvh.add_frame(self.frame_buffer[0])
             self.rvh.add_frame(self.hpf_history[0])
             self.rvh.add_frame(combined)
-            self.rvh.add_frame(self.kernels[EMDDirection.LEFT])
-            self.rvh.add_frame(self.kernels[EMDDirection.RIGHT])
-            self.rvh.add_frame(self.kernels[EMDDirection.UP])
-            self.rvh.add_frame(self.kernels[EMDDirection.DOWN])
             self.rvh.commit_frame()
         # else: 
         #     pass # maybe log
