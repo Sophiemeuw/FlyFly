@@ -31,7 +31,7 @@ class Controller(BaseController):
         # min and max range of the descending signal
         DELTA_MIN = 0.2
         DELTA_MAX = 1
-        IMPORTANCE = 0.5 # Odor taxis has lower priority
+        IMPORTANCE = 0.6 # Odor taxis has lower priority
      
         I_right = ((obs["odor_intensity"][0][1] + obs["odor_intensity"][0][3]))/2
         I_left = ((obs["odor_intensity"][0][0] + obs["odor_intensity"][0][2]))/2
@@ -64,10 +64,10 @@ class Controller(BaseController):
         # Weight ommatidia: front gets higher weight
         center = 360
         std = 120
-        weights = np.exp(-((np.arange(721) - center) ** 2) / (2 * std**2))
+        #weights = np.exp(-((np.arange(721) - center) ** 2) / (2 * std**2))
 
-        left_weighted = np.sum(brightness[0] * weights)
-        right_weighted = np.sum(brightness[1] * weights)
+        left_weighted = np.sum(brightness[0])
+        right_weighted = np.sum(brightness[1])
 
         # Compute binocular front brightness (center ~721)
         left_front = brightness[0, 620:]
