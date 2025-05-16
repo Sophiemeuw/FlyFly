@@ -19,22 +19,24 @@ class Controller(BaseController):
         self.timestep = timestep
         self.time = 0.0
 
-        # Odor taxis setup
+        # Odor taxis & CPG setup
         self.cpg_network = get_cpg(timestep=timestep, seed=seed)
         self.preprogrammed_steps = PreprogrammedSteps()
 
-        # COM state (meters)
+        # Position tracking
         self.position = np.zeros(2)
-        # empirical gain for displacement integration (0 < g < 1)
-        self.g = 0.3
+        self.position_trace = []
 
         # Path integration state
         self.leg_stance_history = [False] * 6
         self.leg_stance_start_positions = [None] * 6
         self.leg_displacements = [[] for _ in range(6)]
+        self.g = 0.3  # empirical gain
 
-        # Logging
-        self.position_trace = []
+        # Homing logic
+        self.reached_target = False
+        self.odor_threshold = 200  # adjust as needed
+        self.retrace_index = None
 
     def get_odor_taxis(self, obs: Observation) -> CommandWithImportance:
         ODOR_GAIN, DELTA_MIN, DELTA_MAX, IMPORTANCE = -500, 0.2, 1.0, 0.5
@@ -52,12 +54,80 @@ class Controller(BaseController):
             right = DELTA_MAX
         return CommandWithImportance(left, right, IMPORTANCE)
 
+    def get_retrace_command(self, obs: Observation) -> CommandWithImportance:
+        IMPORTANCE = 1.0
+        DELTA_MIN, DELTA_MAX = 0.2, 1.0
+        GAIN = 2.0
+
+        if self.retrace_index is None or self.retrace_index < 0:
+            return CommandWithImportance(1.0, 1.0, IMPORTANCE)
+
+        target_pos = self.position_trace[self.retrace_index]
+        vector = target_pos - self.position
+        angle_to_target = np.arctan2(vector[1], vector[0])
+        fly_heading = obs.get("heading", 0.0)
+        angle_diff = angle_to_target - fly_heading
+        angle_diff = np.arctan2(np.sin(angle_diff), np.cos(angle_diff))
+
+        turn = np.tanh(GAIN * angle_diff)
+
+        left = DELTA_MAX
+        right = DELTA_MAX
+        if turn > 0:
+            left = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * abs(turn)
+        else:
+            right = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * abs(turn)
+
+        if np.linalg.norm(vector) < 0.01 and self.retrace_index > 0:
+            self.retrace_index -= 1
+
+        return CommandWithImportance(left, right, IMPORTANCE)
+
+    def pillar_avoidance(self, obs: Observation, base_cmd: CommandWithImportance) -> CommandWithImportance:
+        MAX_DELTA = 1.0
+        MIN_DELTA = 0.2
+        IMPORTANCE = 0.7
+        GAIN = 15500
+
+        vision = obs["vision"]
+        brightness = np.mean(vision, axis=2)
+        center, std = 360, 120
+        weights = np.exp(-((np.arange(721) - center) ** 2) / (2 * std**2))
+        left_weighted = np.sum(brightness[0] * weights)
+        right_weighted = np.sum(brightness[1] * weights)
+        left_front = brightness[0, 620:]
+        right_front = brightness[1, :100]
+        front_b = np.mean(np.concatenate([left_front, right_front]))
+        left_side = np.mean(brightness[0, 500:620])
+        right_side = np.mean(brightness[1, 100:220])
+
+        if (front_b < 5 or left_side < 3 or right_side < 3) and np.linalg.norm(obs["velocity"][:2]) < 0.2:
+            if left_side < right_side:
+                l_sig, r_sig = 0.3, 1.0
+            elif right_side < left_side:
+                l_sig, r_sig = 1.0, 0.3
+            else:
+                l_sig, r_sig = (1.0, 0.3) if random.random() < 0.5 else (0.3, 1.0)
+            l = IMPORTANCE * l_sig + (1 - IMPORTANCE) * base_cmd.left_descending_signal
+            r = IMPORTANCE * r_sig + (1 - IMPORTANCE) * base_cmd.right_descending_signal
+            return CommandWithImportance(l, r, IMPORTANCE)
+
+        diff = left_weighted - right_weighted
+        turn = np.tanh(GAIN * diff) + np.random.uniform(-0.05, 0.05)
+        l_sig, r_sig = MAX_DELTA, MAX_DELTA
+        if turn > 0:
+            l_sig = MAX_DELTA - (MAX_DELTA - MIN_DELTA) * abs(turn)
+        else:
+            r_sig = MAX_DELTA - (MAX_DELTA - MIN_DELTA) * abs(turn)
+
+        left = IMPORTANCE * l_sig + base_cmd.importance * base_cmd.left_descending_signal
+        right = IMPORTANCE * r_sig + base_cmd.importance * base_cmd.right_descending_signal
+        return CommandWithImportance(left, right, IMPORTANCE)
+
     def integrate_displacement(self, obs: Observation):
-        # Collect new stance-phase displacements
         legs = obs["end_effectors"]
         forces = obs["contact_forces"]
         stance = [np.linalg.norm(f) > 4 for f in forces]
-
         for i in range(6):
             if stance[i] and not self.leg_stance_history[i]:
                 self.leg_stance_start_positions[i] = np.array(legs[i])
@@ -69,56 +139,39 @@ class Controller(BaseController):
                     self.leg_displacements[i].append(disp2)
                 self.leg_stance_start_positions[i] = None
             self.leg_stance_history[i] = stance[i]
-
-        # Sum and average displacements
-        total_disp = np.zeros(2)
-        count = 0
+        total, cnt = np.zeros(2), 0
         for dlist in self.leg_displacements:
-            for disp in dlist:
-                total_disp += disp
-                count += 1
-        if count == 0:
+            for d in dlist:
+                total += d
+                cnt += 1
+        if cnt == 0:
             return
-        avg_disp = total_disp / count
-
-        # Rotate displacement by heading if available
+        avg = total / cnt
         if "heading" in obs:
-            # assume obs['heading'][0] gives yaw angle in radians
-            yaw = obs['heading']  # heading is provided as a scalar yaw angle in radians
+            yaw = obs["heading"]
             c, s = np.cos(yaw), np.sin(yaw)
-            R = np.array([[c, -s], [s, c]])
-            avg_disp = R.dot(avg_disp)
-
-        # Integrate with empirical gain
-        dw = -self.g * avg_disp
-        self.position += dw
-
-        # Clear used displacements
+            avg = np.array([[c, -s], [s, c]]).dot(avg)
+        self.position += -self.g * avg
         self.leg_displacements = [[] for _ in range(6)]
 
     def get_actions(self, obs: Observation) -> Action:
         self.time += self.timestep
-        cmd = self.get_odor_taxis(obs)
-        action = np.array([cmd.left_descending_signal, cmd.right_descending_signal])
-
-        joints, adhesion = step_cpg(
-            cpg_network=self.cpg_network,
-            preprogrammed_steps=self.preprogrammed_steps,
-            action=action,
-        )
-
-        # Integrate COM via empirical displacement gain
         self.integrate_displacement(obs)
-
-        # Log position (meters)
         self.position_trace.append(self.position.copy())
 
-        # Debug print (SI units, no mm conversion, includes yaw)
-        if "fly" in obs:
-            true_xy = obs['fly'][0][:2]
-            print(f"Time: {self.time:.4f} s | True pos: {true_xy} m | Est pos: {self.position} m")
+        if not self.reached_target and np.mean(obs["odor_intensity"]) > self.odor_threshold:
+            self.reached_target = True
+            self.retrace_index = len(self.position_trace) - 1
 
-        return {"joints": joints, "adhesion": adhesion}
+        if not self.reached_target:
+            base_cmd = self.get_odor_taxis(obs)
+        else:
+            base_cmd = self.get_retrace_command(obs)
+
+        combined_cmd = self.pillar_avoidance(obs, base_cmd)
+        action = np.array([combined_cmd.left_descending_signal, combined_cmd.right_descending_signal])
+        joint_angles, adhesion = step_cpg(self.cpg_network, self.preprogrammed_steps, action)
+        return {"joints": joint_angles, "adhesion": adhesion}
 
     def done_level(self, obs: Observation):
         return False
@@ -130,6 +183,5 @@ class Controller(BaseController):
         self.leg_stance_start_positions = [None] * 6
         self.leg_displacements = [[] for _ in range(6)]
         self.position_trace = []
-
-    def print_trajectory(self):
-        print("Position trace (m):", self.position_trace)
+        self.reached_target = False
+        self.retrace_index = None
