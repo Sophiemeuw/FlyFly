@@ -79,6 +79,8 @@ def run_simulation(
                 del obs["vision"]
             if "raw_vision" in obs:
                 del obs["raw_vision"]
+            if "raw_vision" in info:
+                del info["raw_vision"]
         obs_hist.append(obs)
         info_hist.append(info)
 
