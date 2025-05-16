@@ -1,5 +1,6 @@
 import numpy as np
-
+import shelve
+from datetime import datetime
 
 def get_cpg(timestep, seed=0):
     from flygym.examples.locomotion import CPGNetwork
@@ -63,3 +64,28 @@ def step_cpg(cpg_network, preprogrammed_steps, action):
     adhesion_onoff = np.array(adhesion_onoff).astype(int)
 
     return joint_angles, adhesion_onoff
+
+class RawVideoSaver:
+    def __init__(self, name):
+        self.name = name
+        self.last_frame_hash = 0
+    
+    def __enter__(self): 
+        self.db = shelve.open(".stuff/raw_video")
+        self.db["frames"] = []
+        self.db["start_time"] = datetime.now().isoformat()
+    
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.db.close()
+    
+    def provide_data(self, frame):
+        cur_frame_hash = np.sum(frame)
+        # print(cur_frame_hash)
+        if cur_frame_hash != self.last_frame_hash:
+            self.last_frame_hash = cur_frame_hash
+            self.db["frames"].append({
+                "time": datetime.now().isoformat(),
+                "data": frame
+            })
+        else: 
+            print("skipping")
