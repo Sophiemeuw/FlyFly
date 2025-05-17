@@ -22,7 +22,7 @@ class RawVideoHandler:
         self.retina = retina
 
     def __enter__(self):
-        fps = 5
+        fps = 100
         self.writer = imageio.get_writer(self.save_path, fps=fps)  # unsure about fps
         self.flat_writer = imageio.get_writer(self.flat_save_path, fps=fps)
 
