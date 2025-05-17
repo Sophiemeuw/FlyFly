@@ -35,7 +35,10 @@ class Controller(BaseController):
 
         # Homing logic
         self.reached_target = False
-        self.odor_threshold = 200  # adjust as needed
+        self.turning_timer = 0
+        self.turning_duration = int(1.0 / timestep)  # turn for ~1 second
+        self.begin_return = False
+        self.odor_threshold = 200
         self.retrace_index = None
 
     def get_odor_taxis(self, obs: Observation) -> CommandWithImportance:
@@ -78,7 +81,7 @@ class Controller(BaseController):
         else:
             right = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * abs(turn)
 
-        if np.linalg.norm(vector) < 0.01 and self.retrace_index > 0:
+        if np.linalg.norm(vector) < 0.04 and self.retrace_index > 0:
             self.retrace_index -= 1
 
         return CommandWithImportance(left, right, IMPORTANCE)
@@ -87,7 +90,7 @@ class Controller(BaseController):
         MAX_DELTA = 1.0
         MIN_DELTA = 0.2
         IMPORTANCE = 0.7
-        GAIN = 20500  # Increased sensitivity
+        GAIN = 22500
 
         vision = obs["vision"]
         brightness = np.mean(vision, axis=2)
@@ -189,6 +192,18 @@ class Controller(BaseController):
 
         if not self.reached_target and np.mean(obs["odor_intensity"]) > self.odor_threshold:
             self.reached_target = True
+            self.turning_timer = self.turning_duration
+
+        if self.reached_target and self.turning_timer > 0:
+            self.turning_timer -= 5
+            joint_angles, adhesion = step_cpg(self.cpg_network, self.preprogrammed_steps, np.array([0.0, 1.0]))
+            return {
+                "joints": joint_angles,
+                "adhesion": adhesion
+            }
+
+        if self.reached_target and not self.begin_return:
+            self.begin_return = True
             self.retrace_index = len(self.position_trace) - 1
 
         if not self.reached_target:
@@ -202,7 +217,7 @@ class Controller(BaseController):
         return {"joints": joint_angles, "adhesion": adhesion}
 
     def done_level(self, obs: Observation):
-        return False
+        return self.reached_target and self.retrace_index == 0
 
     def reset(self, **kwargs):
         self.cpg_network.reset()
@@ -212,4 +227,6 @@ class Controller(BaseController):
         self.leg_displacements = [[] for _ in range(6)]
         self.position_trace = []
         self.reached_target = False
+        self.turning_timer = 0
+        self.begin_return = False
         self.retrace_index = None
