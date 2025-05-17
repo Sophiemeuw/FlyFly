@@ -409,30 +409,82 @@ def id_mask_to_fly(id_map: np.ndarray, id_mask: np.ndarray):
 if __name__ == "__main__":
     import pickle
     import sys
+    import os
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    generator_parser = subparsers.add_parser(
+        "generator", help="Generate visual patterns"
+    )
+
+    generator_parser.add_argument(
+        "--pattern",
+        type=str,
+        default="ud",
+        choices=["ud", "du", "lr", "rl"],
+        help="Pattern to generate. Options are: ud, du, lr, rl",
+    )
+    generator_parser.add_argument(
+        "--num_scans",
+        type=int,
+        default=1,
+        help="Number of scans to generate. Default is 1.",
+    )
+    generator_parser.add_argument(
+        "--scan_frames",
+        type=int,
+        default=200,
+        help="Number of frames to scan. Default is 200.",
+    )
+
+    generator_parser.add_argument(
+        "--force-generate",
+        action="store_true",
+        help="Force generate the pattern even if it already exists.",
+    )
+
+    pkl_source = subparsers.add_parser("pkl", help="Process a pkl file")
+    pkl_source.add_argument(
+        "--file",
+        type=str,
+        default=".stuff/incoming_ball.pkl",
+        help="Path to the pkl file to process. Default is .stuff/incoming_ball.pkl.",
+    )
+    args = parser.parse_args()
+
+    if args.command == "generator":
+        pattern = args.pattern
+        num_scans = args.num_scans
+        scan_frames = args.scan_frames
+
+        if not args.force_generate and os.path.exists(f".stuff/{pattern}.pkl"):
+            with open(f".stuff/{pattern}.pkl", "rb") as f:
+                views = pickle.load(f)
+            print("Loaded existing data")
+        else:
+            print("Generating new data")
+            ld = LoomDetector((2, 721, 2), debug=True)
+            views = generate_visual_pattern(ld, pattern, scan_frames, num_scans)
+            views = [view[1] for view in views]
+
+            with open(f".stuff/{pattern}.pkl", "wb") as f:
+                pickle.dump(views, f)
+    elif args.command == "pkl":
+        file_name = args.file
+        if not os.path.exists(file_name):
+            raise FileNotFoundError(f"File {file_name} does not exist.")
+        with open(file_name, "rb") as f:
+            data = pickle.load(f)
+        views = data["vision"]
 
     ld = LoomDetector((2, 721, 2), debug=True)
-    views = generate_visual_pattern(ld, "sweep_ud", 100, 3)
 
-    rvh = RawVideoHandler("test_pattern", ld.retina)
-    with rvh:
-        for flat_view, fly_view in views:
-            rvh.add_frame(flat_view[0, :, :], "flat")
-            rvh.add_frame(fly_view)
-            rvh.commit_frame()
-
-    exit(0)
-    if len(sys.argv) > 1:
-        file_name = sys.argv[1]
-    else:
-        file_name = ".stuff/walking_with_threat.pkl"
-
-    with open(
-        file_name,
-        "rb",
-    ) as f:
-        data = pickle.load(f)
-
-    ld = LoomDetector((2, 721, 2), debug=True)
+    length = len(views)
+    i = 1
     with ld:
-        for i, frame in enumerate(data["vision"]):
-            ld.process(frame)
+        for fly_view in views:
+            print(f"{i}/{length}")
+            i += 1
+            ld.process(fly_view)
