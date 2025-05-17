@@ -45,6 +45,7 @@ class RawVideoHandler:
             else:
                 self.frame = np.vstack((self.frame, frame))
         elif frame_type == "flat":
+            frame = (frame / frame.max()) * 255
             frame = frame.astype(np.uint8)
             if type(self.flat_frame) != np.ndarray:
                 self.flat_frame = frame
@@ -118,7 +119,7 @@ class LoomDetector:
         HPF_CORNER = 1 / (2 * np.pi * HPF_TAU)
         BUF_SIZE = 10
 
-        LFP_TAU = 0.0005
+        LFP_TAU = 0.005
         LPF_CORNER = 1 / (2 * np.pi * LFP_TAU)
 
         self.frames_recvd = 0
@@ -137,9 +138,9 @@ class LoomDetector:
             1, LPF_CORNER, "low", output="ba", fs=1 / TS
         )
 
-        self.hpf_history = deque([np.zeros(input_size)], 1)
-        self.lpf_on_history = deque([np.zeros(input_size)], 1)
-        self.lpf_off_history = deque([np.zeros(input_size)], 1)
+        self.hpf_history = deque([np.zeros(input_size)], 2)
+        self.lpf_on_history = deque([np.zeros(input_size)], 2)
+        self.lpf_off_history = deque([np.zeros(input_size)], 2)
 
         self.initialized = False
         self.retina = Retina()
@@ -175,8 +176,14 @@ class LoomDetector:
         id_map = self.retina.ommatidia_id_map
         id_map_shape_y, id_map_shape_x = id_map.shape
 
-        off_dir_x_range = (int(off_dir_start * id_map_shape_x), int(off_dir_end * id_map_shape_x))
-        off_dir_y_range = (int(off_dir_start * id_map_shape_y), int(off_dir_end * id_map_shape_y))
+        off_dir_x_range = (
+            int(off_dir_start * id_map_shape_x),
+            int(off_dir_end * id_map_shape_x),
+        )
+        off_dir_y_range = (
+            int(off_dir_start * id_map_shape_y),
+            int(off_dir_end * id_map_shape_y),
+        )
 
         if direction == EMDDirection.UP:
             ids = np.unique(
