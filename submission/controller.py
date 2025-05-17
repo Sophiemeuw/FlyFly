@@ -87,42 +87,70 @@ class Controller(BaseController):
         MAX_DELTA = 1.0
         MIN_DELTA = 0.2
         IMPORTANCE = 0.7
-        GAIN = 15500
+        GAIN = 20500  # Increased sensitivity
 
         vision = obs["vision"]
         brightness = np.mean(vision, axis=2)
-        center, std = 360, 120
+
+        center = 360
+        std = 120
         weights = np.exp(-((np.arange(721) - center) ** 2) / (2 * std**2))
+
         left_weighted = np.sum(brightness[0] * weights)
         right_weighted = np.sum(brightness[1] * weights)
+
         left_front = brightness[0, 620:]
         right_front = brightness[1, :100]
-        front_b = np.mean(np.concatenate([left_front, right_front]))
-        left_side = np.mean(brightness[0, 500:620])
-        right_side = np.mean(brightness[1, 100:220])
+        front_brightness = np.mean(np.concatenate([left_front, right_front]))
 
-        if (front_b < 5 or left_side < 3 or right_side < 3) and np.linalg.norm(obs["velocity"][:2]) < 0.2:
-            if left_side < right_side:
-                l_sig, r_sig = 0.3, 1.0
-            elif right_side < left_side:
-                l_sig, r_sig = 1.0, 0.3
+        left_side_brightness = np.mean(brightness[0, 500:620])
+        right_side_brightness = np.mean(brightness[1, 100:220])
+
+        if (
+            front_brightness < 5
+            or left_side_brightness < 3
+            or right_side_brightness < 3
+        ) and np.linalg.norm(obs["velocity"][:2]) < 0.5:
+
+            if left_side_brightness < right_side_brightness:
+                left_signal = 0.3
+                right_signal = 1.0
+            elif right_side_brightness < left_side_brightness:
+                left_signal = 1.0
+                right_signal = 0.3
             else:
-                l_sig, r_sig = (1.0, 0.3) if random.random() < 0.5 else (0.3, 1.0)
-            l = IMPORTANCE * l_sig + (1 - IMPORTANCE) * base_cmd.left_descending_signal
-            r = IMPORTANCE * r_sig + (1 - IMPORTANCE) * base_cmd.right_descending_signal
-            return CommandWithImportance(l, r, IMPORTANCE)
+                if random.random() < 0.5:
+                    left_signal = 1.0
+                    right_signal = 0.3
+                else:
+                    left_signal = 0.3
+                    right_signal = 1.0
+
+            return CommandWithImportance(
+                IMPORTANCE * left_signal + (1 - IMPORTANCE) * base_cmd.left_descending_signal,
+                IMPORTANCE * right_signal + (1 - IMPORTANCE) * base_cmd.right_descending_signal,
+                IMPORTANCE
+            )
 
         diff = left_weighted - right_weighted
-        turn = np.tanh(GAIN * diff) + np.random.uniform(-0.05, 0.05)
-        l_sig, r_sig = MAX_DELTA, MAX_DELTA
-        if turn > 0:
-            l_sig = MAX_DELTA - (MAX_DELTA - MIN_DELTA) * abs(turn)
-        else:
-            r_sig = MAX_DELTA - (MAX_DELTA - MIN_DELTA) * abs(turn)
+        turn_signal = np.tanh(GAIN * diff)
+        turn_signal += np.random.uniform(-0.05, 0.05)
 
-        left = IMPORTANCE * l_sig + base_cmd.importance * base_cmd.left_descending_signal
-        right = IMPORTANCE * r_sig + base_cmd.importance * base_cmd.right_descending_signal
-        return CommandWithImportance(left, right, IMPORTANCE)
+        left_signal = MAX_DELTA
+        right_signal = MAX_DELTA
+        if turn_signal > 0:
+            left_signal = MAX_DELTA - (MAX_DELTA - MIN_DELTA) * abs(turn_signal)
+        else:
+            right_signal = MAX_DELTA - (MAX_DELTA - MIN_DELTA) * abs(turn_signal)
+
+        left_descending_signal = (
+            IMPORTANCE * left_signal + base_cmd.importance * base_cmd.left_descending_signal
+        )
+        right_descending_signal = (
+            IMPORTANCE * right_signal + base_cmd.importance * base_cmd.right_descending_signal
+        )
+
+        return CommandWithImportance(left_descending_signal, right_descending_signal, IMPORTANCE)
 
     def integrate_displacement(self, obs: Observation):
         legs = obs["end_effectors"]
