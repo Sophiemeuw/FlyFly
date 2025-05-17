@@ -353,8 +353,7 @@ def generate_visual_pattern(
     id_map = ld.retina.ommatidia_id_map
     id_map_sz_y, id_map_sz_x = id_map.shape
 
-    data = [np.zeros((2, id_map_sz_y, id_map_sz_x))]
-
+    output = []
     flip = False
     if pattern_type.endswith("lr") or pattern_type.endswith("rl"):
         increment_per_frame = int(id_map_sz_x / scan_frames)
@@ -379,10 +378,12 @@ def generate_visual_pattern(
 
             if flip:
                 frame_data = np.flipud(np.fliplr(frame_data))
-            frame_data = np.stack([frame_data, frame_data], axis=0)
-            data.append(frame_data)
 
-    return data
+            fly_view = id_mask_to_fly(ld.retina.ommatidia_id_map, frame_data)
+            frame_data = np.stack([frame_data, frame_data], axis=0)
+            output.append((frame_data, fly_view))
+
+    return output
 
 
 @nb.njit(parallel=True)
@@ -410,18 +411,16 @@ if __name__ == "__main__":
     import sys
 
     ld = LoomDetector((2, 721, 2), debug=True)
-    pattern = generate_visual_pattern(ld, "sweep_ud", 100, 3)
+    views = generate_visual_pattern(ld, "sweep_ud", 100, 3)
 
     rvh = RawVideoHandler("test_pattern", ld.retina)
     with rvh:
-        for frame in pattern:
-            fly_view = id_mask_to_fly(ld.retina.ommatidia_id_map, frame[0, :, :])
-            rvh.add_frame(frame[0, :, :], "flat")
+        for flat_view, fly_view in views:
+            rvh.add_frame(flat_view[0, :, :], "flat")
             rvh.add_frame(fly_view)
             rvh.commit_frame()
 
     exit(0)
-
     if len(sys.argv) > 1:
         file_name = sys.argv[1]
     else:
