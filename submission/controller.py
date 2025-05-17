@@ -81,7 +81,7 @@ class Controller(BaseController):
         else:
             right = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * abs(turn)
 
-        if np.linalg.norm(vector) < 0.04 and self.retrace_index > 0:
+        if np.linalg.norm(vector) < 0.03 and self.retrace_index > 0:
             self.retrace_index -= 1
 
         return CommandWithImportance(left, right, IMPORTANCE)
