@@ -306,11 +306,19 @@ class LoomDetector:
         on_rect = self.edge_rectification(hpf, 0.05, RectificationType.ON)
         off_rect = self.edge_rectification(hpf, 0.05, RectificationType.OFF)
 
-        # maybe fucked
-        lpf_on = self.lpf_b[0] * on_rect + self.lpf_b[1] * self.lpf_on_history[0]
-        lpf_off = self.lpf_b[0] * off_rect + self.lpf_b[1] * self.lpf_off_history[0]
-        self.lpf_on_history.appendleft(lpf_on)
-        self.lpf_off_history.appendleft(lpf_off)
+        on_last, lpf_on_last = self.lpf_on_history[0]
+        off_last, lpf_off_last = self.lpf_off_history[0]
+
+        lpf_on = (
+            self.lpf_b[0] * on_rect + self.lpf_b[1] * on_last - self.lpf_a * lpf_on_last
+        )
+        lpf_off = (
+            self.lpf_b[0] * off_rect
+            + self.lpf_b[1] * off_last
+            - self.lpf_a * lpf_off_last
+        )
+        self.lpf_on_history.appendleft((on_rect, lpf_on))
+        self.lpf_off_history.appendleft((off_rect, lpf_off))
 
         combined = on_rect + off_rect
 
