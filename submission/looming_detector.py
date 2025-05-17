@@ -45,7 +45,6 @@ class RawVideoHandler:
             else:
                 self.frame = np.vstack((self.frame, frame))
         elif frame_type == "flat":
-            frame = (frame / frame.max()) * 255
             frame = frame.astype(np.uint8)
             if type(self.flat_frame) != np.ndarray:
                 self.flat_frame = frame
@@ -59,19 +58,21 @@ class RawVideoHandler:
         # input image is not divisible by macro_block_size=16, resizing from (900, 514) to (912, 528) to ensure video compatibility with most codecs
         # and players. To prevent resizing, make your input image divisible by the macro_block_size or set the macro_block_size to 1
         # (risking incompatibility).
-        if self.frame.shape[0] % 16 != 0 or self.frame.shape[1] % 16 != 0:
-            new_height = (self.frame.shape[0] + 15) // 16 * 16
-            new_width = (self.frame.shape[1] + 15) // 16 * 16
-            self.frame = np.pad(
-                self.frame,
-                (
-                    (0, new_height - self.frame.shape[0]),
-                    (0, new_width - self.frame.shape[1]),
-                    (0, 0),
-                ),
-                mode="constant",
-                constant_values=0,
-            )
+        if type(self.frame) is np.ndarray:
+            if self.frame.shape[0] % 16 != 0 or self.frame.shape[1] % 16 != 0:
+                new_height = (self.frame.shape[0] + 15) // 16 * 16
+                new_width = (self.frame.shape[1] + 15) // 16 * 16
+                self.frame = np.pad(
+                    self.frame,
+                    (
+                        (0, new_height - self.frame.shape[0]),
+                        (0, new_width - self.frame.shape[1]),
+                        (0, 0),
+                    ),
+                    mode="constant",
+                    constant_values=0,
+                )
+            self.writer.append_data(self.frame)
 
         if type(self.flat_frame) is np.ndarray:
             if self.flat_frame.shape[0] % 16 != 0 or self.flat_frame.shape[1] % 16 != 0:
@@ -88,7 +89,6 @@ class RawVideoHandler:
                 )
             self.flat_writer.append_data(self.flat_frame)
 
-        self.writer.append_data(self.frame)
         self.frame = None
         self.flat_frame = None
 
