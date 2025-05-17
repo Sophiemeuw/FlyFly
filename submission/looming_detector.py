@@ -347,9 +347,80 @@ class LoomDetector:
         #     pass # maybe log
 
 
+def generate_visual_pattern(
+    ld: LoomDetector, pattern_type: str, scan_frames, num_scans
+):
+    id_map = ld.retina.ommatidia_id_map
+    id_map_sz_y, id_map_sz_x = id_map.shape
+
+    data = [np.zeros((2, id_map_sz_y, id_map_sz_x))]
+
+    flip = False
+    if pattern_type.endswith("lr") or pattern_type.endswith("rl"):
+        increment_per_frame = int(id_map_sz_x / scan_frames)
+        increment_dir = "x"
+        if pattern_type.endswith("rl"):
+            flip = True
+    elif pattern_type.endswith("ud") or pattern_type.endswith("du"):
+        increment_per_frame = int(id_map_sz_y / scan_frames)
+        increment_dir = "y"
+        if pattern_type.endswith("du"):
+            flip = True
+    else:
+        raise ValueError(f"Pattern type {pattern_type} not recognized")
+
+    for scan in range(num_scans):
+        for frame in range(scan_frames):
+            frame_data = np.zeros((id_map_sz_y, id_map_sz_x))
+            if increment_dir == "x":
+                frame_data[:, 0 : frame * increment_per_frame] = 255
+            elif increment_dir == "y":
+                frame_data[0 : frame * increment_per_frame, :] = 255
+
+            if flip:
+                frame_data = np.flipud(np.fliplr(frame_data))
+            frame_data = np.stack([frame_data, frame_data], axis=0)
+            data.append(frame_data)
+
+    return data
+
+
+@nb.njit(parallel=True)
+def id_mask_to_fly(id_map: np.ndarray, id_mask: np.ndarray):
+    data = np.zeros(721)
+    num_added = np.zeros(721)
+    ys, xs = id_mask.shape
+
+    for y in nb.prange(ys - 1):
+        for x in nb.prange(xs - 1):
+            target = id_map[y, x] - 1
+            data[target] += id_mask[y, x]
+            num_added[target] += 1
+
+    reshaped_data = np.zeros((2, 721, 2))
+    reshaped_data[0, :, 0] = data
+    reshaped_data[1, :, 0] = data
+    reshaped_data[0, :, 1] = data
+    reshaped_data[1, :, 1] = data
+    return reshaped_data
+
+
 if __name__ == "__main__":
     import pickle
     import sys
+
+    ld = LoomDetector((2, 721, 2), debug=True)
+    pattern = generate_visual_pattern(ld, "sweep_ud", 100, 3)
+
+    rvh = RawVideoHandler("test_pattern", ld.retina)
+    with rvh:
+        for frame in pattern:
+            fly_view = id_mask_to_fly(ld.retina.ommatidia_id_map, frame[0, :, :])
+            rvh.add_frame(frame[0, :, :], "flat")
+            rvh.add_frame(fly_view)
+            rvh.commit_frame()
+
+    exit(0)
 
     if len(sys.argv) > 1:
         file_name = sys.argv[1]
