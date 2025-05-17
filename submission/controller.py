@@ -80,25 +80,25 @@ class Controller(BaseController):
 
         # Trigger emergency swerve if stuck and sees darkness in front or on the side
         if (
-            front_overlap_brightness < 5
+            front_overlap_brightness < 10
             or left_side_brightness < 3
             or right_side_brightness < 3
         ) and np.linalg.norm(obs["velocity"][:2]) < 0.2:
 
             # Swerve away from the darker side
             if left_side_brightness < right_side_brightness:
-                left_signal = 0.3
+                left_signal = 0.1
                 right_signal = 1.0
             elif right_side_brightness < left_side_brightness:
                 left_signal = 1.0
-                right_signal = 0.3
+                right_signal = 0.1
             else:
                 # Fall back to random left or right if sides are similar
                 if random.random() < 0.5:
                     left_signal = 1.0
-                    right_signal = 0.3
+                    right_signal = 0.1
                 else:
-                    left_signal = 0.3
+                    left_signal = 0.1
                     right_signal = 1.0
 
             return CommandWithImportance(
