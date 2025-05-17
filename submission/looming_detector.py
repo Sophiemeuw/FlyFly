@@ -8,6 +8,8 @@ import imageio
 from copy import deepcopy
 from flygym.vision import Retina
 from PIL import Image
+import numba as nb
+import time
 
 
 class RawVideoHandler:
@@ -72,12 +74,22 @@ class RectificationType(IntEnum):
     OFF = 2
 
 
+class PathwayIndices(IntEnum):
+    HORIZ_LR = 0
+    HORIZ_RL = 1
+    VERT_UD = 2
+    VERT_DU = 3
+
+
 class LoomDetector:
     def __init__(self, input_size: tuple, debug=False):
         TS = 0.001
         HPF_TAU = 0.250
         HPF_CORNER = 1 / (2 * np.pi * HPF_TAU)
         BUF_SIZE = 10
+
+        LFP_TAU = 0.0005
+        LPF_CORNER = 1 / (2 * np.pi * LFP_TAU)
 
         self.frames_recvd = 0
         self.logger = logging.getLogger("ld")
@@ -90,7 +102,14 @@ class LoomDetector:
         self.hpf_b, self.hpf_a = scipy.signal.butter(
             1, HPF_CORNER, "high", output="ba", fs=1 / TS
         )
+
+        self.lpf_b, self.lpf_a = scipy.signal.butter(
+            1, LPF_CORNER, "low", output="ba", fs=1 / TS
+        )
+
         self.hpf_history = deque([np.zeros(input_size)], 1)
+        self.lpf_on_history = deque([np.zeros(input_size)], 1)
+        self.lpf_off_history = deque([np.zeros(input_size)], 1)
 
         self.initialized = False
         self.retina = Retina()
@@ -175,6 +194,56 @@ class LoomDetector:
 
         return flattened.reshape(pre_shape)
 
+    @staticmethod
+    @nb.njit(parallel=True, nopython=True)
+    def make_motion_detector_images(id_map, on, off, lpf_on, lpf_off):
+        px_y, px_x = id_map.shape
+
+        on_path = np.zeros((px_y, px_x, 4, 2))
+        off_path = np.zeros((px_y, px_x, 4, 2))
+
+        for side in nb.prange(2):
+            for y in nb.prange(px_y - 1):
+                for x in nb.prange(px_x - 1):
+                    id = id_map[y, x]
+                    id_right = id_map[y, x + 1]
+                    id_down = id_map[y + 1, x]
+
+                    if id < 0 or id_right < 0 or id_down < 0:
+                        continue
+
+                    on_path[y, x, PathwayIndices.HORIZ_LR.value, side] = (
+                        lpf_on[side, id, 0] * on[side, id_right, 0]
+                    )
+
+                    on_path[y, x, PathwayIndices.HORIZ_RL.value, side] = (
+                        on[side, id, 0] * lpf_on[side, id_right, 0]
+                    )
+
+                    on_path[y, x, PathwayIndices.VERT_UD.value, side] = (
+                        lpf_on[side, id, 0] * on[side, id_down, 0]
+                    )
+                    on_path[y, x, PathwayIndices.VERT_DU.value, side] = (
+                        on[side, id, 0] * lpf_on[side, id_down, 0]
+                    )
+
+                    off_path[y, x, PathwayIndices.HORIZ_LR.value, side] = (
+                        lpf_off[side, id, 0] * off[side, id_right, 0]
+                    )
+
+                    off_path[y, x, PathwayIndices.HORIZ_RL.value, side] = (
+                        off[side, id, 0] * lpf_off[side, id_right, 0]
+                    )
+
+                    off_path[y, x, PathwayIndices.VERT_UD.value, side] = (
+                        lpf_off[side, id, 0] * off[side, id_down, 0]
+                    )
+                    off_path[y, x, PathwayIndices.VERT_DU.value, side] = (
+                        off[side, id, 0] * lpf_off[side, id_down, 0]
+                    )
+
+        return on_path, off_path
+
     def process(self, images: np.ndarray) -> float:
         PROCESS_PERIOD = 1
         EMD_OFFSET = 5
@@ -196,7 +265,7 @@ class LoomDetector:
         self.frame_buffer.appendleft(frame)
 
         hpf = (
-            self.hpf_b[0] * images
+            self.hpf_b[0] * (images)
             + self.hpf_b[1] * self.frame_buffer[1]
             - self.hpf_a[1] * self.hpf_history[0]
         )
@@ -204,25 +273,46 @@ class LoomDetector:
         # first order hpf in pipeline
         self.hpf_history.appendleft(hpf)
 
-        on_rect = self.edge_rectification(hpf, 0, RectificationType.ON)
+        on_rect = self.edge_rectification(hpf, 0.05, RectificationType.ON)
         off_rect = self.edge_rectification(hpf, 0.05, RectificationType.OFF)
 
+        # maybe fucked
+        lpf_on = self.lpf_b[0] * on_rect + self.lpf_b[1] * self.lpf_on_history[0]
+        lpf_off = self.lpf_b[0] * off_rect + self.lpf_b[1] * self.lpf_off_history[0]
+        self.lpf_on_history.appendleft(lpf_on)
+        self.lpf_off_history.appendleft(lpf_off)
+
         combined = on_rect + off_rect
+
+        on_path, off_path = self.make_motion_detector_images(
+            self.retina.ommatidia_id_map, on_rect, off_rect, lpf_on, lpf_off
+        )
 
         if self.debug:
             self.rvh.add_frame(self.frame_buffer[0])
             self.rvh.add_frame(self.hpf_history[0])
             self.rvh.add_frame(combined)
+
+            self.rvh.add_frame(on_path[:, :, 0, 0], "flat")
+
             self.rvh.commit_frame()
+
+        return combined
         # else:
         #     pass # maybe log
 
 
 if __name__ == "__main__":
     import pickle
+    import sys
+
+    if len(sys.argv) > 1:
+        file_name = sys.argv[1]
+    else:
+        file_name = ".stuff/walking_with_threat.pkl"
 
     with open(
-        "/home/niel/Documents/repos/controlling-behaviour/flyfly/.stuff/walking_with_threat.pkl",
+        file_name,
         "rb",
     ) as f:
         data = pickle.load(f)
