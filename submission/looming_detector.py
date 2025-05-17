@@ -15,29 +15,43 @@ import time
 class RawVideoHandler:
     def __init__(self, file_name_prefix, retina):
         self.save_path = Path("debug") / f"{file_name_prefix}_raw_vision.mp4"
+        self.flat_save_path = Path("debug") / f"{file_name_prefix}_flat_frames.mp4"
         self.save_path.parent.mkdir(parents=True, exist_ok=True)
         self.frame = None
+        self.flat_frame = None
         self.retina = retina
 
     def __enter__(self):
-        self.writer = imageio.get_writer(self.save_path, fps=5)  # unsure about fps
+        fps = 5
+        self.writer = imageio.get_writer(self.save_path, fps=fps)  # unsure about fps
+        self.flat_writer = imageio.get_writer(self.flat_save_path, fps=fps)
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.writer.close()
+        self.flat_writer.close()
 
-    def add_frame(self, frame):
-        left_readable = self.retina.hex_pxls_to_human_readable(
-            frame[0, :, :], color_8bit=True
-        )
-        right_readable = self.retina.hex_pxls_to_human_readable(
-            frame[1, :, :], color_8bit=True
-        )
+    def add_frame(self, frame, frame_type="normal"):
+        if frame_type == "normal":
+            left_readable = self.retina.hex_pxls_to_human_readable(
+                frame[0, :, :], color_8bit=True
+            )
+            right_readable = self.retina.hex_pxls_to_human_readable(
+                frame[1, :, :], color_8bit=True
+            )
 
-        frame = np.hstack((left_readable, right_readable))
-        if type(self.frame) != np.ndarray:
-            self.frame = frame
+            frame = np.hstack((left_readable, right_readable))
+            if type(self.frame) != np.ndarray:
+                self.frame = frame
+            else:
+                self.frame = np.vstack((self.frame, frame))
+        elif frame_type == "flat":
+            frame = frame.astype(np.uint8)
+            if type(self.flat_frame) != np.ndarray:
+                self.flat_frame = frame
+            else:
+                self.flat_frame = np.vstack((self.flat_frame, frame))
         else:
-            self.frame = np.vstack((self.frame, frame))
+            raise ValueError(f"Type {frame_type} not recognized")
 
     def commit_frame(self):
         # This is to make imageio stop complaining:
@@ -58,8 +72,24 @@ class RawVideoHandler:
                 constant_values=0,
             )
 
+        if type(self.flat_frame) is np.ndarray:
+            if self.flat_frame.shape[0] % 16 != 0 or self.flat_frame.shape[1] % 16 != 0:
+                new_height = (self.flat_frame.shape[0] + 15) // 16 * 16
+                new_width = (self.flat_frame.shape[1] + 15) // 16 * 16
+                self.flat_frame = np.pad(
+                    self.flat_frame,
+                    (
+                        (0, new_height - self.flat_frame.shape[0]),
+                        (0, new_width - self.flat_frame.shape[1]),
+                    ),
+                    mode="constant",
+                    constant_values=0,
+                )
+            self.flat_writer.append_data(self.flat_frame)
+
         self.writer.append_data(self.frame)
         self.frame = None
+        self.flat_frame = None
 
 
 class EMDDirection(IntEnum):
