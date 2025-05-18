@@ -22,7 +22,7 @@ class RawVideoHandler:
         self.retina = retina
 
     def __enter__(self):
-        fps = 100
+        fps = 10
         self.writer = imageio.get_writer(self.save_path, fps=fps)  # unsure about fps
         self.flat_writer = imageio.get_writer(self.flat_save_path, fps=fps)
 
@@ -114,12 +114,12 @@ class PathwayIndices(IntEnum):
 
 class LoomDetector:
     def __init__(self, input_size: tuple, debug=False):
-        TS = 0.001
-        HPF_TAU = 0.250
+        TS = 0.01
+        HPF_TAU = 0.300
         HPF_CORNER = 1 / (2 * np.pi * HPF_TAU)
         BUF_SIZE = 10
 
-        LFP_TAU = 0.005
+        LFP_TAU = 0.05
         LPF_CORNER = 1 / (2 * np.pi * LFP_TAU)
 
         self.frames_recvd = 0
@@ -139,8 +139,8 @@ class LoomDetector:
         )
 
         self.hpf_history = deque([np.zeros(input_size)], 2)
-        self.lpf_on_history = deque([np.zeros(input_size)], 2)
-        self.lpf_off_history = deque([np.zeros(input_size)], 2)
+        self.lpf_on_history = deque([(np.zeros(input_size), np.zeros(input_size))], 2)
+        self.lpf_off_history = deque([(np.zeros(input_size), np.zeros(input_size))], 2)
 
         self.initialized = False
         self.retina = Retina()
@@ -226,13 +226,13 @@ class LoomDetector:
         elif type == RectificationType.OFF:
             pattern = flattened < threshold
 
-        flattened[pattern] = np.abs(flattened[pattern] - threshold)
+        flattened[pattern] = 10 * np.abs(flattened[pattern] - threshold)
         flattened[~pattern] = np.zeros(np.count_nonzero(~pattern))
 
         return flattened.reshape(pre_shape)
 
     @staticmethod
-    @nb.njit(parallel=True, nopython=True)
+    @nb.njit(parallel=True)
     def make_motion_detector_images(id_map, on, off, lpf_on, lpf_off):
         px_y, px_x = id_map.shape
 
@@ -291,39 +291,39 @@ class LoomDetector:
             images[:, :, 0] + images[:, :, 1]
         )  # combine the channels since they are useless to us.
 
-        if not self.initialized and self.frames_recvd < self.frame_buffer.maxlen:
+        if self.frames_recvd < self.frame_buffer.maxlen:
             # just add the frame to the buffer
             self.frame_buffer.appendleft(images)
             return 0
 
-        self.initialized = True
-
-        self.frames_recvd = 0
-        self.frame_buffer.appendleft(frame)
+        self.frame_buffer.appendleft(images)
 
         hpf = (
             self.hpf_b[0] * (images)
             + self.hpf_b[1] * self.frame_buffer[1]
             - self.hpf_a[1] * self.hpf_history[0]
-        )
+        ) / self.hpf_a[0]
 
         # first order hpf in pipeline
         self.hpf_history.appendleft(hpf)
 
-        on_rect = self.edge_rectification(hpf, 0.05, RectificationType.ON)
+        on_rect = self.edge_rectification(hpf, 0.0, RectificationType.ON)
         off_rect = self.edge_rectification(hpf, 0.05, RectificationType.OFF)
 
         on_last, lpf_on_last = self.lpf_on_history[0]
         off_last, lpf_off_last = self.lpf_off_history[0]
 
         lpf_on = (
-            self.lpf_b[0] * on_rect + self.lpf_b[1] * on_last - self.lpf_a * lpf_on_last
-        )
+            self.lpf_b[0] * on_rect
+            + self.lpf_b[1] * on_last
+            - self.lpf_a[1] * lpf_on_last
+        ) / self.lpf_a[0]
         lpf_off = (
             self.lpf_b[0] * off_rect
             + self.lpf_b[1] * off_last
-            - self.lpf_a * lpf_off_last
-        )
+            - self.lpf_a[1] * lpf_off_last
+        ) / self.lpf_a[0]
+
         self.lpf_on_history.appendleft((on_rect, lpf_on))
         self.lpf_off_history.appendleft((off_rect, lpf_off))
 
@@ -332,13 +332,24 @@ class LoomDetector:
         on_path, off_path = self.make_motion_detector_images(
             self.retina.ommatidia_id_map, on_rect, off_rect, lpf_on, lpf_off
         )
+        on_path = 255 * (off_path / off_path.max())
+
+        if self.frames_recvd % 50 == 0:
+            print("Saving...")
+            np.save(f".stuff/on_path_{self.frames_recvd}", on_path)
 
         if self.debug:
             self.rvh.add_frame(self.frame_buffer[0])
             self.rvh.add_frame(self.hpf_history[0])
-            self.rvh.add_frame(combined)
+            self.rvh.add_frame(on_rect)
+            self.rvh.add_frame(lpf_on)
+            self.rvh.add_frame(off_rect)
+            self.rvh.add_frame(lpf_off)
 
             self.rvh.add_frame(on_path[:, :, 0, 0], "flat")
+            self.rvh.add_frame(on_path[:, :, 1, 0], "flat")
+            self.rvh.add_frame(on_path[:, :, 2, 0], "flat")
+            self.rvh.add_frame(on_path[:, :, 3, 0], "flat")
 
             self.rvh.commit_frame()
 
