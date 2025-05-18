@@ -13,6 +13,7 @@ import flyvis
 from flygym.examples.vision import RealTimeVisionNetworkView, RetinaMapper
 from torch import Tensor
 from flyvis.utils.activity_utils import LayerActivity
+from flygym.examples.vision.viz import visualize_vision
 
 
 class RawVideoHandler:
@@ -104,12 +105,15 @@ class LoomDetector:
         self.vision_retina_mapper = RetinaMapper()
 
         self.vision_refresh_rate = 1 / 0.01
+        self.frame = 0
 
         self._vision_network_initialized = False
         self._vision_nn_buf = None
         self._vision_nn_arr_buf = None
 
         self.debug = debug
+
+        print(self.vision_network.connectome)
 
     # Thanks to flygym/examples/vision/realistic_vision.py for the infra code :)
     def _init_network(self, vision_obs: np.ndarray):
@@ -130,18 +134,23 @@ class LoomDetector:
         self._initial_state = initial_state
         self._vision_network_initialized = True
 
-    def _get_visual_nn_activities(self, vision_obs):
+    def _get_visual_nn_activities(self, vision_obs, get_details=False):
         vision_obs_grayscale = vision_obs.max(axis=-1)
         visual_input = self.vision_retina_mapper.flygym_to_flyvis(vision_obs_grayscale)
         visual_input = Tensor(visual_input).to(flyvis.device)
         nn_activities_arr = self.vision_network.forward_one_step(visual_input)
         nn_activities_arr = nn_activities_arr.cpu().numpy()
-        nn_activities = LayerActivity(
-            nn_activities_arr,
-            self.vision_network.connectome,
-            keepref=True,
-            use_central=False,
-        )
+        if get_details:
+            nn_activities = LayerActivity(
+                nn_activities_arr,
+                self.vision_network.connectome,
+                keepref=True,
+                use_central=False,
+            )
+
+            print(nn_activities["T4a"])
+        else:
+            nn_activities = None
         return nn_activities, nn_activities_arr
 
     def __enter__(self):
@@ -156,13 +165,20 @@ class LoomDetector:
         if "vision" not in obs:
             return
 
+        self.frame += 1
+
         if not self._vision_network_initialized:
             self._init_network(obs["vision"])
 
         if info["vision_updated"] or self._vision_nn_buf is None:
+            get_details = self.frame % 10 == 0
+            if get_details:
+                print("Getting Details...")
+
             nn_activities, nn_activities_arr = self._get_visual_nn_activities(
-                obs["vision"]
+                obs["vision"], get_details=get_details
             )
+
             self._vision_nn_buf = nn_activities
             self._vision_nn_arr_buf = nn_activities_arr
 
@@ -305,9 +321,7 @@ if __name__ == "__main__":
     info_arr = [{"vision_updated": True} for _ in range(len(obs_arr))]
 
     length = len(obs_arr)
-    i = 1
     with ld:
         for i in range(length):
             print(f"{i}/{length}")
-            i += 1
             ld.process(obs_arr[i], info_arr[i])
