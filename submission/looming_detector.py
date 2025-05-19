@@ -242,9 +242,9 @@ class LoomDetector:
         for side in nb.prange(2):
             for y in nb.prange(px_y - 1):
                 for x in nb.prange(px_x - 1):
-                    id = id_map[y, x]
-                    id_right = id_map[y, x + 1]
-                    id_down = id_map[y + 1, x]
+                    id = id_map[y, x] - 1
+                    id_right = id_map[y, x + 1] - 1
+                    id_down = id_map[y + 1, x] - 1
 
                     if id < 0 or id_right < 0 or id_down < 0:
                         continue
@@ -334,9 +334,9 @@ class LoomDetector:
         )
         on_path = 255 * (off_path / off_path.max())
 
-        if self.frames_recvd % 50 == 0:
-            print("Saving...")
-            np.save(f".stuff/on_path_{self.frames_recvd}", on_path)
+        # if self.frames_recvd % 50 == 0:
+        #     print("Saving...")
+        #     np.save(f".stuff/on_path_{self.frames_recvd}", on_path)
 
         if self.debug:
             self.rvh.add_frame(self.frame_buffer[0])
@@ -346,10 +346,54 @@ class LoomDetector:
             self.rvh.add_frame(off_rect)
             self.rvh.add_frame(lpf_off)
 
-            self.rvh.add_frame(on_path[:, :, 0, 0], "flat")
-            self.rvh.add_frame(on_path[:, :, 1, 0], "flat")
-            self.rvh.add_frame(on_path[:, :, 2, 0], "flat")
-            self.rvh.add_frame(on_path[:, :, 3, 0], "flat")
+            # self.rvh.add_frame(
+            #     np.hstack([test_image[0, ...], test_image[1, ...]]), "flat"
+            # )
+
+            self.rvh.add_frame(
+                np.hstack(
+                    [
+                        off_path[:, :, 0, 0],
+                        on_path[:, :, 0, 0],
+                        off_path[:, :, 0, 1],
+                        on_path[:, :, 0, 1],
+                    ]
+                ),
+                "flat",
+            )
+            self.rvh.add_frame(
+                np.hstack(
+                    [
+                        off_path[:, :, 1, 0],
+                        on_path[:, :, 1, 0],
+                        off_path[:, :, 1, 1],
+                        on_path[:, :, 1, 1],
+                    ]
+                ),
+                "flat",
+            )
+            self.rvh.add_frame(
+                np.hstack(
+                    [
+                        off_path[:, :, 2, 0],
+                        on_path[:, :, 2, 0],
+                        off_path[:, :, 2, 1],
+                        on_path[:, :, 2, 1],
+                    ]
+                ),
+                "flat",
+            )
+            self.rvh.add_frame(
+                np.hstack(
+                    [
+                        off_path[:, :, 3, 0],
+                        on_path[:, :, 3, 0],
+                        off_path[:, :, 3, 1],
+                        on_path[:, :, 3, 1],
+                    ]
+                ),
+                "flat",
+            )
 
             self.rvh.commit_frame()
 
