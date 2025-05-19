@@ -291,6 +291,8 @@ class LoomDetector:
             images[:, :, 0] + images[:, :, 1]
         )  # combine the channels since they are useless to us.
 
+        images *= 255  # scale up to 8bit
+
         if self.frames_recvd < self.frame_buffer.maxlen:
             # just add the frame to the buffer
             self.frame_buffer.appendleft(images)
@@ -427,9 +429,9 @@ def generate_visual_pattern(
         for frame in range(scan_frames):
             frame_data = np.zeros((id_map_sz_y, id_map_sz_x))
             if increment_dir == "x":
-                frame_data[:, 0 : frame * increment_per_frame] = 255
+                frame_data[:, 0 : frame * increment_per_frame] = 1
             elif increment_dir == "y":
-                frame_data[0 : frame * increment_per_frame, :] = 255
+                frame_data[0 : frame * increment_per_frame, :] = 1
 
             if flip:
                 frame_data = np.flipud(np.fliplr(frame_data))
