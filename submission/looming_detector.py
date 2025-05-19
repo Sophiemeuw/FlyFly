@@ -9,88 +9,94 @@ from copy import deepcopy
 from flygym.vision import Retina
 from PIL import Image
 import numba as nb
-import time
 
 
 class RawVideoHandler:
     def __init__(self, file_name_prefix, retina):
-        self.save_path = Path("debug") / f"{file_name_prefix}_raw_vision.mp4"
-        self.flat_save_path = Path("debug") / f"{file_name_prefix}_flat_frames.mp4"
-        self.save_path.parent.mkdir(parents=True, exist_ok=True)
-        self.frame = None
-        self.flat_frame = None
+        self.writers = {}
+        self.file_name_prefix = file_name_prefix
         self.retina = retina
 
+    def _make_new_writer(self, name, frame_type):
+        print(f"Making new writer with name {name}")
+        path = Path("debug") / f"{self.file_name_prefix}_{name}.mp4"
+        os.makedirs(path.parent, exist_ok=True)
+
+        self.writers[name] = {
+            "writer": imageio.get_writer(path),
+            "pending_frame": None,
+            "frame_type": frame_type,
+        }
+
     def __enter__(self):
-        fps = 10
-        self.writer = imageio.get_writer(self.save_path, fps=fps)  # unsure about fps
-        self.flat_writer = imageio.get_writer(self.flat_save_path, fps=fps)
+        pass
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.writer.close()
-        self.flat_writer.close()
+        for writer in self.writers.values():
+            writer["writer"].close()
 
-    def add_frame(self, frame, frame_type="normal"):
-        if frame_type == "normal":
-            left_readable = self.retina.hex_pxls_to_human_readable(
-                frame[0, :, :], color_8bit=True
-            )
-            right_readable = self.retina.hex_pxls_to_human_readable(
-                frame[1, :, :], color_8bit=True
-            )
+    def add_frame(self, frame, video_file, frame_type="flat"):
+        if video_file not in self.writers.keys():
+            self._make_new_writer(video_file, frame_type)
 
-            frame = np.hstack((left_readable, right_readable))
-            if type(self.frame) != np.ndarray:
-                self.frame = frame
-            else:
-                self.frame = np.vstack((self.frame, frame))
-        elif frame_type == "flat":
-            frame = frame.astype(np.uint8)
-            if type(self.flat_frame) != np.ndarray:
-                self.flat_frame = frame
-            else:
-                self.flat_frame = np.vstack((self.flat_frame, frame))
+        writer = self.writers[video_file]
+        if writer["frame_type"] != frame_type:
+            raise RuntimeError("Frame type changing not supported!")
+
+        match frame_type:
+            case "fly":
+                left_readable = self.retina.hex_pxls_to_human_readable(
+                    frame[0, :, :], color_8bit=True
+                )
+                right_readable = self.retina.hex_pxls_to_human_readable(
+                    frame[1, :, :], color_8bit=True
+                )
+
+                frame = np.hstack((left_readable, right_readable))
+            case "flat":
+                frame = frame.astype(np.uint8)
+            case _:
+                raise ValueError(f"Type {frame_type} not recognized")
+
+        if type(writer["pending_frame"]) != np.ndarray:
+            writer["pending_frame"] = frame
         else:
-            raise ValueError(f"Type {frame_type} not recognized")
+            writer["pending_frame"] = np.vstack((writer["pending_frame"], frame))
 
     def commit_frame(self):
-        # This is to make imageio stop complaining:
-        # input image is not divisible by macro_block_size=16, resizing from (900, 514) to (912, 528) to ensure video compatibility with most codecs
-        # and players. To prevent resizing, make your input image divisible by the macro_block_size or set the macro_block_size to 1
-        # (risking incompatibility).
-        if type(self.frame) is np.ndarray:
-            if self.frame.shape[0] % 16 != 0 or self.frame.shape[1] % 16 != 0:
-                new_height = (self.frame.shape[0] + 15) // 16 * 16
-                new_width = (self.frame.shape[1] + 15) // 16 * 16
-                self.frame = np.pad(
-                    self.frame,
-                    (
-                        (0, new_height - self.frame.shape[0]),
-                        (0, new_width - self.frame.shape[1]),
-                        (0, 0),
-                    ),
-                    mode="constant",
-                    constant_values=0,
-                )
-            self.writer.append_data(self.frame)
+        for writer in self.writers.values():
+            pending_frame = writer["pending_frame"]
+            if type(pending_frame) is np.ndarray:
+                if pending_frame.shape[0] % 16 != 0 or pending_frame.shape[1] % 16 != 0:
+                    new_height = (pending_frame.shape[0] + 15) // 16 * 16
+                    new_width = (pending_frame.shape[1] + 15) // 16 * 16
+                    match writer["frame_type"]:
+                        case "fly":
+                            reshape_shape = (
+                                (0, new_height - pending_frame.shape[0]),
+                                (0, new_width - pending_frame.shape[1]),
+                                (0, 0),
+                            )
+                        case "flat":
+                            reshape_shape = (
+                                (0, new_height - pending_frame.shape[0]),
+                                (0, new_width - pending_frame.shape[1]),
+                            )
 
-        if type(self.flat_frame) is np.ndarray:
-            if self.flat_frame.shape[0] % 16 != 0 or self.flat_frame.shape[1] % 16 != 0:
-                new_height = (self.flat_frame.shape[0] + 15) // 16 * 16
-                new_width = (self.flat_frame.shape[1] + 15) // 16 * 16
-                self.flat_frame = np.pad(
-                    self.flat_frame,
-                    (
-                        (0, new_height - self.flat_frame.shape[0]),
-                        (0, new_width - self.flat_frame.shape[1]),
-                    ),
-                    mode="constant",
-                    constant_values=0,
-                )
-            self.flat_writer.append_data(self.flat_frame)
+                    # This is to make imageio stop complaining:
+                    # input image is not divisible by macro_block_size=16, resizing from (900, 514) to (912, 528) to ensure video compatibility with most codecs
+                    # and players. To prevent resizing, make your input image divisible by the macro_block_size or set the macro_block_size to 1
+                    # (risking incompatibility).
 
-        self.frame = None
-        self.flat_frame = None
+                    pending_frame = np.pad(
+                        pending_frame,
+                        reshape_shape,
+                        mode="constant",
+                        constant_values=0,
+                    )
+
+                writer["writer"].append_data(pending_frame)
+                writer["pending_frame"] = None
 
 
 class EMDDirection(IntEnum):
@@ -382,61 +388,57 @@ class LoomDetector:
         #     np.save(f".stuff/on_path_{self.frames_recvd}", on_path)
 
         if self.debug:
-            self.rvh.add_frame(np.hstack(list(self.frame_buffer[0])), "flat")
-            self.rvh.add_frame(np.hstack(list(self.hpf_history[0])), "flat")
-            self.rvh.add_frame(np.hstack(list(on_rect)), "flat")
-            self.rvh.add_frame(np.hstack(list(lpf_on)), "flat")
-            self.rvh.add_frame(np.hstack(list(off_rect)), "flat")
-            self.rvh.add_frame(np.hstack(list(lpf_off)), "flat")
+            self.rvh.add_frame(np.hstack(list(self.frame_buffer[0])), "first_pass")
+            self.rvh.add_frame(np.hstack(list(self.hpf_history[0])), "first_pass")
+            self.rvh.add_frame(np.hstack(list(on_rect)), "first_pass")
+            self.rvh.add_frame(np.hstack(list(lpf_on)), "first_pass")
+            self.rvh.add_frame(np.hstack(list(off_rect)), "first_pass")
+            self.rvh.add_frame(np.hstack(list(lpf_off)), "first_pass")
 
-            # self.rvh.add_frame(
-            #     np.hstack([test_image[0, ...], test_image[1, ...]]), "flat"
-            # )
-
-            # self.rvh.add_frame(
-            #     np.hstack(
-            #         [
-            #             off_path[:, :, 0, 0],
-            #             on_path[:, :, 0, 0],
-            #             off_path[:, :, 0, 1],
-            #             on_path[:, :, 0, 1],
-            #         ]
-            #     ),
-            #     "flat",
-            # )
-            # self.rvh.add_frame(
-            #     np.hstack(
-            #         [
-            #             off_path[:, :, 1, 0],
-            #             on_path[:, :, 1, 0],
-            #             off_path[:, :, 1, 1],
-            #             on_path[:, :, 1, 1],
-            #         ]
-            #     ),
-            #     "flat",
-            # )
-            # self.rvh.add_frame(
-            #     np.hstack(
-            #         [
-            #             off_path[:, :, 2, 0],
-            #             on_path[:, :, 2, 0],
-            #             off_path[:, :, 2, 1],
-            #             on_path[:, :, 2, 1],
-            #         ]
-            #     ),
-            #     "flat",
-            # )
-            # self.rvh.add_frame(
-            #     np.hstack(
-            #         [
-            #             off_path[:, :, 3, 0],
-            #             on_path[:, :, 3, 0],
-            #             off_path[:, :, 3, 1],
-            #             on_path[:, :, 3, 1],
-            #         ]
-            #     ),
-            #     "flat",
-            # )
+            self.rvh.add_frame(
+                np.hstack(
+                    [
+                        off_path[0, :, :, 0],
+                        on_path[0, :, :, 0],
+                        off_path[1, :, :, 0],
+                        on_path[1, :, :, 0],
+                    ]
+                ),
+                "directional_pathways",
+            )
+            self.rvh.add_frame(
+                np.hstack(
+                    [
+                        off_path[0, :, :, 1],
+                        on_path[0, :, :, 1],
+                        off_path[1, :, :, 1],
+                        on_path[1, :, :, 1],
+                    ]
+                ),
+                "directional_pathways",
+            )
+            self.rvh.add_frame(
+                np.hstack(
+                    [
+                        off_path[0, :, :, 2],
+                        on_path[0, :, :, 2],
+                        off_path[1, :, :, 2],
+                        on_path[1, :, :, 2],
+                    ]
+                ),
+                "directional_pathways",
+            )
+            self.rvh.add_frame(
+                np.hstack(
+                    [
+                        off_path[0, :, :, 3],
+                        on_path[0, :, :, 3],
+                        off_path[1, :, :, 3],
+                        on_path[1, :, :, 3],
+                    ]
+                ),
+                "directional_pathways",
+            )
 
             self.rvh.commit_frame()
 
