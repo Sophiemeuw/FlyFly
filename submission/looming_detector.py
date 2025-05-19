@@ -393,7 +393,9 @@ class LoomDetector:
             self.rvh.add_frame(np.hstack(list(on_rect)), "first_pass")
             self.rvh.add_frame(np.hstack(list(lpf_on)), "first_pass")
             self.rvh.add_frame(np.hstack(list(off_rect)), "first_pass")
-            self.rvh.add_frame(np.hstack(list(lpf_off)), "first_pass")
+
+            on_path = 255 * (on_path / on_path.max())
+            off_path = 255 * (off_path / off_path.max())
 
             self.rvh.add_frame(
                 np.hstack(
