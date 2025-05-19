@@ -119,7 +119,7 @@ class PathwayIndices(IntEnum):
 
 
 @staticmethod
-@nb.njit(parallel=True)
+@nb.njit(parallel=True, cache=True)
 def project_to_rect(id_map, image) -> np.ndarray:
 
     px_y, px_x = id_map.shape
@@ -285,7 +285,7 @@ class LoomDetector:
         return flattened.reshape(pre_shape)
 
     @staticmethod
-    @nb.njit(parallel=True)
+    @nb.njit(parallel=True, cache=True)
     def make_motion_detector_images(on, off, lpf_on, lpf_off):
         _, px_y, px_x = on.shape
 
@@ -486,7 +486,7 @@ def generate_visual_pattern(
     return output
 
 
-@nb.njit(parallel=True)
+@nb.njit(parallel=True, cache=True)
 def id_mask_to_fly(id_map: np.ndarray, id_mask: np.ndarray):
     data = np.zeros(721)
     num_added = np.zeros(721)
