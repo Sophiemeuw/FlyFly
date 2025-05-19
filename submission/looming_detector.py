@@ -151,11 +151,11 @@ def project_all_to_rect(id_map, images):
 class LoomDetector:
     def __init__(self, input_size: tuple, debug=False):
         TS = 0.01
-        HPF_TAU = 2
+        HPF_TAU = 0.01
         HPF_CORNER = 1 / (2 * np.pi * HPF_TAU)
         BUF_SIZE = 10
 
-        LFP_TAU = 0.005
+        LFP_TAU = 0.050
         LPF_CORNER = 1 / (2 * np.pi * LFP_TAU)
 
         self.retina = Retina()
@@ -176,7 +176,12 @@ class LoomDetector:
             1, LPF_CORNER, "low", output="ba", fs=1 / TS
         )
 
-        self.hpf_history = deque([np.zeros(self.retina.ommatidia_id_map.shape)], 2)
+        self.hpf_history = deque([np.zeros(self.retina.ommatidia_id_map.shape)], 10)
+        self.on_rect_history = deque([np.zeros(self.retina.ommatidia_id_map.shape)], 10)
+        self.off_rect_history = deque(
+            [np.zeros(self.retina.ommatidia_id_map.shape)], 10
+        )
+
         self.lpf_on_history = deque(
             [
                 (
@@ -340,11 +345,6 @@ class LoomDetector:
 
         images = project_to_rect(self.retina.ommatidia_id_map, images)
 
-        if self.frames_recvd < self.frame_buffer.maxlen:
-            # just add the frame to the buffer
-            self.frame_buffer.appendleft(images)
-            return 0
-
         self.frame_buffer.appendleft(images)
 
         hpf = (
@@ -356,11 +356,14 @@ class LoomDetector:
         # first order hpf in pipeline
         self.hpf_history.appendleft(hpf)
 
-        on_rect = self.edge_rectification(hpf, 0.0, RectificationType.ON)
-        off_rect = self.edge_rectification(hpf, 0.05, RectificationType.OFF)
+        on_rect = self.edge_rectification(hpf, 10, RectificationType.ON)
+        off_rect = self.edge_rectification(hpf, 5, RectificationType.OFF)
 
         on_last, lpf_on_last = self.lpf_on_history[0]
         off_last, lpf_off_last = self.lpf_off_history[0]
+
+        self.on_rect_history.appendleft(on_rect)
+        self.off_rect_history.appendleft(off_rect)
 
         lpf_on = (
             self.lpf_b[0] * on_rect
@@ -378,10 +381,13 @@ class LoomDetector:
 
         combined = on_rect + off_rect
 
+        if self.frames_recvd < 10:
+            print("Accumulating frames...")
+            return
+
         on_path, off_path = self.make_motion_detector_images(
-            on_rect, off_rect, lpf_on, lpf_off
+            on_rect, off_rect, self.on_rect_history[9], self.off_rect_history[9]
         )
-        on_path = 255 * (off_path / off_path.max())
 
         # if self.frames_recvd % 50 == 0:
         #     print("Saving...")
@@ -391,8 +397,9 @@ class LoomDetector:
             self.rvh.add_frame(np.hstack(list(self.frame_buffer[0])), "first_pass")
             self.rvh.add_frame(np.hstack(list(self.hpf_history[0])), "first_pass")
             self.rvh.add_frame(np.hstack(list(on_rect)), "first_pass")
-            self.rvh.add_frame(np.hstack(list(lpf_on)), "first_pass")
+            self.rvh.add_frame(np.hstack(list(self.on_rect_history[9])), "first_pass")
             self.rvh.add_frame(np.hstack(list(off_rect)), "first_pass")
+            self.rvh.add_frame(np.hstack(list(self.off_rect_history[9])), "first_pass")
 
             on_path = 255 * (on_path / on_path.max())
             off_path = 255 * (off_path / off_path.max())
