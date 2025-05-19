@@ -398,10 +398,10 @@ class LoomDetector:
             self.rvh.add_frame(
                 np.hstack(
                     [
-                        off_path[0, :, :, 0],
-                        on_path[0, :, :, 0],
-                        off_path[1, :, :, 0],
-                        on_path[1, :, :, 0],
+                        off_path[0, :, :, PathwayIndices.HORIZ_LR.value],
+                        on_path[0, :, :, PathwayIndices.HORIZ_LR.value],
+                        off_path[1, :, :, PathwayIndices.HORIZ_LR.value],
+                        on_path[1, :, :, PathwayIndices.HORIZ_LR.value],
                     ]
                 ),
                 "directional_pathways",
@@ -409,10 +409,10 @@ class LoomDetector:
             self.rvh.add_frame(
                 np.hstack(
                     [
-                        off_path[0, :, :, 1],
-                        on_path[0, :, :, 1],
-                        off_path[1, :, :, 1],
-                        on_path[1, :, :, 1],
+                        off_path[0, :, :, PathwayIndices.HORIZ_RL.value],
+                        on_path[0, :, :, PathwayIndices.HORIZ_RL.value],
+                        off_path[1, :, :, PathwayIndices.HORIZ_RL.value],
+                        on_path[1, :, :, PathwayIndices.HORIZ_RL.value],
                     ]
                 ),
                 "directional_pathways",
@@ -420,10 +420,10 @@ class LoomDetector:
             self.rvh.add_frame(
                 np.hstack(
                     [
-                        off_path[0, :, :, 2],
-                        on_path[0, :, :, 2],
-                        off_path[1, :, :, 2],
-                        on_path[1, :, :, 2],
+                        off_path[0, :, :, PathwayIndices.VERT_UD.value],
+                        on_path[0, :, :, PathwayIndices.VERT_UD.value],
+                        off_path[1, :, :, PathwayIndices.VERT_UD.value],
+                        on_path[1, :, :, PathwayIndices.VERT_UD.value],
                     ]
                 ),
                 "directional_pathways",
@@ -431,10 +431,10 @@ class LoomDetector:
             self.rvh.add_frame(
                 np.hstack(
                     [
-                        off_path[0, :, :, 3],
-                        on_path[0, :, :, 3],
-                        off_path[1, :, :, 3],
-                        on_path[1, :, :, 3],
+                        off_path[0, :, :, PathwayIndices.VERT_DU.value],
+                        on_path[0, :, :, PathwayIndices.VERT_DU.value],
+                        off_path[1, :, :, PathwayIndices.VERT_DU.value],
+                        on_path[1, :, :, PathwayIndices.VERT_DU.value],
                     ]
                 ),
                 "directional_pathways",
