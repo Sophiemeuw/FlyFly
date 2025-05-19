@@ -112,21 +112,53 @@ class PathwayIndices(IntEnum):
     VERT_DU = 3
 
 
+@staticmethod
+@nb.njit(parallel=True)
+def project_to_rect(id_map, image) -> np.ndarray:
+
+    px_y, px_x = id_map.shape
+    result = np.zeros((2, px_y, px_x))
+
+    for side in nb.prange(2):
+        for y in nb.prange(px_y - 1):
+            for x in nb.prange(px_x - 1):
+                id = id_map[y, x] - 1
+                if id < 0:
+                    continue
+
+                result[side, y, x] = image[side, id, 0]
+
+    return result
+
+
+def project_all_to_rect(id_map, images):
+    data = np.stack([image for image in images], axis=0)
+    num_images = len(images)
+    results = np.zeros((num_images, 2, id_map.shape[0], id_map.shape[1]))
+
+    for img_id in nb.prange(num_images):
+        results[img_id, ...] = project_to_rect(id_map, data[img_id, ...])
+
+    return [results[i, ...] for i in range(num_images)]
+
+
 class LoomDetector:
     def __init__(self, input_size: tuple, debug=False):
         TS = 0.01
-        HPF_TAU = 0.300
+        HPF_TAU = 2
         HPF_CORNER = 1 / (2 * np.pi * HPF_TAU)
         BUF_SIZE = 10
 
-        LFP_TAU = 0.05
+        LFP_TAU = 0.005
         LPF_CORNER = 1 / (2 * np.pi * LFP_TAU)
 
+        self.retina = Retina()
         self.frames_recvd = 0
         self.logger = logging.getLogger("ld")
 
         self.frame_buffer = deque(
-            [np.zeros(input_size) for _ in range(BUF_SIZE)], BUF_SIZE
+            [np.zeros(self.retina.ommatidia_id_map.shape) for _ in range(BUF_SIZE)],
+            BUF_SIZE,
         )
 
         self.emd_signals = {dir: 0 for dir in EMDDirection}
@@ -138,12 +170,27 @@ class LoomDetector:
             1, LPF_CORNER, "low", output="ba", fs=1 / TS
         )
 
-        self.hpf_history = deque([np.zeros(input_size)], 2)
-        self.lpf_on_history = deque([(np.zeros(input_size), np.zeros(input_size))], 2)
-        self.lpf_off_history = deque([(np.zeros(input_size), np.zeros(input_size))], 2)
+        self.hpf_history = deque([np.zeros(self.retina.ommatidia_id_map.shape)], 2)
+        self.lpf_on_history = deque(
+            [
+                (
+                    np.zeros(self.retina.ommatidia_id_map.shape),
+                    np.zeros(self.retina.ommatidia_id_map.shape),
+                )
+            ],
+            2,
+        )
+        self.lpf_off_history = deque(
+            [
+                (
+                    np.zeros(self.retina.ommatidia_id_map.shape),
+                    np.zeros(self.retina.ommatidia_id_map.shape),
+                )
+            ],
+            2,
+        )
 
         self.initialized = False
-        self.retina = Retina()
 
         self.debug = debug
 
@@ -233,58 +280,50 @@ class LoomDetector:
 
     @staticmethod
     @nb.njit(parallel=True)
-    def make_motion_detector_images(id_map, on, off, lpf_on, lpf_off):
-        px_y, px_x = id_map.shape
+    def make_motion_detector_images(on, off, lpf_on, lpf_off):
+        _, px_y, px_x = on.shape
 
-        on_path = np.zeros((px_y, px_x, 4, 2))
-        off_path = np.zeros((px_y, px_x, 4, 2))
+        on_path = np.zeros((2, px_y, px_x, 4))
+        off_path = np.zeros((2, px_y, px_x, 4))
 
         for side in nb.prange(2):
             for y in nb.prange(px_y - 1):
                 for x in nb.prange(px_x - 1):
-                    id = id_map[y, x] - 1
-                    id_right = id_map[y, x + 1] - 1
-                    id_down = id_map[y + 1, x] - 1
+                    if x + 1 < px_x:
+                        on_path[side, y, x, PathwayIndices.HORIZ_LR.value] = (
+                            lpf_on[side, y, x] * on[side, y, x + 1]
+                        )
 
-                    if id < 0 or id_right < 0 or id_down < 0:
-                        continue
+                        on_path[side, y, x, PathwayIndices.HORIZ_RL.value] = (
+                            on[side, y, x] * lpf_on[side, y, x + 1]
+                        )
 
-                    on_path[y, x, PathwayIndices.HORIZ_LR.value, side] = (
-                        lpf_on[side, id, 0] * on[side, id_right, 0]
-                    )
+                        off_path[side, y, x, PathwayIndices.HORIZ_LR.value] = (
+                            lpf_off[side, y, x] * off[side, y, x + 1]
+                        )
 
-                    on_path[y, x, PathwayIndices.HORIZ_RL.value, side] = (
-                        on[side, id, 0] * lpf_on[side, id_right, 0]
-                    )
+                        off_path[side, y, x, PathwayIndices.HORIZ_RL.value] = (
+                            off[side, y, x] * lpf_off[side, y, x + 1]
+                        )
 
-                    on_path[y, x, PathwayIndices.VERT_UD.value, side] = (
-                        lpf_on[side, id, 0] * on[side, id_down, 0]
-                    )
-                    on_path[y, x, PathwayIndices.VERT_DU.value, side] = (
-                        on[side, id, 0] * lpf_on[side, id_down, 0]
-                    )
+                    if y + 1 < px_y:
+                        on_path[side, y, x, PathwayIndices.VERT_UD.value] = (
+                            lpf_on[side, y, x] * on[side, y + 1, x]
+                        )
+                        on_path[side, y, x, PathwayIndices.VERT_DU.value] = (
+                            on[side, y, x] * lpf_on[side, y + 1, x]
+                        )
 
-                    off_path[y, x, PathwayIndices.HORIZ_LR.value, side] = (
-                        lpf_off[side, id, 0] * off[side, id_right, 0]
-                    )
-
-                    off_path[y, x, PathwayIndices.HORIZ_RL.value, side] = (
-                        off[side, id, 0] * lpf_off[side, id_right, 0]
-                    )
-
-                    off_path[y, x, PathwayIndices.VERT_UD.value, side] = (
-                        lpf_off[side, id, 0] * off[side, id_down, 0]
-                    )
-                    off_path[y, x, PathwayIndices.VERT_DU.value, side] = (
-                        off[side, id, 0] * lpf_off[side, id_down, 0]
-                    )
+                        off_path[side, y, x, PathwayIndices.VERT_UD.value] = (
+                            lpf_off[side, y, x] * off[side, y + 1, x]
+                        )
+                        off_path[side, y, x, PathwayIndices.VERT_DU.value] = (
+                            off[side, y, x] * lpf_off[side, y + 1, x]
+                        )
 
         return on_path, off_path
 
     def process(self, images: np.ndarray) -> float:
-        PROCESS_PERIOD = 1
-        EMD_OFFSET = 5
-
         self.frames_recvd += 1
 
         images[:, :, 0] = (
@@ -292,6 +331,8 @@ class LoomDetector:
         )  # combine the channels since they are useless to us.
 
         images *= 255  # scale up to 8bit
+
+        images = project_to_rect(self.retina.ommatidia_id_map, images)
 
         if self.frames_recvd < self.frame_buffer.maxlen:
             # just add the frame to the buffer
@@ -332,7 +373,7 @@ class LoomDetector:
         combined = on_rect + off_rect
 
         on_path, off_path = self.make_motion_detector_images(
-            self.retina.ommatidia_id_map, on_rect, off_rect, lpf_on, lpf_off
+            on_rect, off_rect, lpf_on, lpf_off
         )
         on_path = 255 * (off_path / off_path.max())
 
@@ -341,61 +382,61 @@ class LoomDetector:
         #     np.save(f".stuff/on_path_{self.frames_recvd}", on_path)
 
         if self.debug:
-            self.rvh.add_frame(self.frame_buffer[0])
-            self.rvh.add_frame(self.hpf_history[0])
-            self.rvh.add_frame(on_rect)
-            self.rvh.add_frame(lpf_on)
-            self.rvh.add_frame(off_rect)
-            self.rvh.add_frame(lpf_off)
+            self.rvh.add_frame(np.hstack(list(self.frame_buffer[0])), "flat")
+            self.rvh.add_frame(np.hstack(list(self.hpf_history[0])), "flat")
+            self.rvh.add_frame(np.hstack(list(on_rect)), "flat")
+            self.rvh.add_frame(np.hstack(list(lpf_on)), "flat")
+            self.rvh.add_frame(np.hstack(list(off_rect)), "flat")
+            self.rvh.add_frame(np.hstack(list(lpf_off)), "flat")
 
             # self.rvh.add_frame(
             #     np.hstack([test_image[0, ...], test_image[1, ...]]), "flat"
             # )
 
-            self.rvh.add_frame(
-                np.hstack(
-                    [
-                        off_path[:, :, 0, 0],
-                        on_path[:, :, 0, 0],
-                        off_path[:, :, 0, 1],
-                        on_path[:, :, 0, 1],
-                    ]
-                ),
-                "flat",
-            )
-            self.rvh.add_frame(
-                np.hstack(
-                    [
-                        off_path[:, :, 1, 0],
-                        on_path[:, :, 1, 0],
-                        off_path[:, :, 1, 1],
-                        on_path[:, :, 1, 1],
-                    ]
-                ),
-                "flat",
-            )
-            self.rvh.add_frame(
-                np.hstack(
-                    [
-                        off_path[:, :, 2, 0],
-                        on_path[:, :, 2, 0],
-                        off_path[:, :, 2, 1],
-                        on_path[:, :, 2, 1],
-                    ]
-                ),
-                "flat",
-            )
-            self.rvh.add_frame(
-                np.hstack(
-                    [
-                        off_path[:, :, 3, 0],
-                        on_path[:, :, 3, 0],
-                        off_path[:, :, 3, 1],
-                        on_path[:, :, 3, 1],
-                    ]
-                ),
-                "flat",
-            )
+            # self.rvh.add_frame(
+            #     np.hstack(
+            #         [
+            #             off_path[:, :, 0, 0],
+            #             on_path[:, :, 0, 0],
+            #             off_path[:, :, 0, 1],
+            #             on_path[:, :, 0, 1],
+            #         ]
+            #     ),
+            #     "flat",
+            # )
+            # self.rvh.add_frame(
+            #     np.hstack(
+            #         [
+            #             off_path[:, :, 1, 0],
+            #             on_path[:, :, 1, 0],
+            #             off_path[:, :, 1, 1],
+            #             on_path[:, :, 1, 1],
+            #         ]
+            #     ),
+            #     "flat",
+            # )
+            # self.rvh.add_frame(
+            #     np.hstack(
+            #         [
+            #             off_path[:, :, 2, 0],
+            #             on_path[:, :, 2, 0],
+            #             off_path[:, :, 2, 1],
+            #             on_path[:, :, 2, 1],
+            #         ]
+            #     ),
+            #     "flat",
+            # )
+            # self.rvh.add_frame(
+            #     np.hstack(
+            #         [
+            #             off_path[:, :, 3, 0],
+            #             on_path[:, :, 3, 0],
+            #             off_path[:, :, 3, 1],
+            #             on_path[:, :, 3, 1],
+            #         ]
+            #     ),
+            #     "flat",
+            # )
 
             self.rvh.commit_frame()
 
