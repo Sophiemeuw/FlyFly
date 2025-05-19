@@ -85,8 +85,8 @@ class Controller(BaseController):
             self.escape_timer -= 1
             # Turn slightly away from the contact force vector
             turn_bias = np.clip(self.escape_direction, -1, 1)
-            left = 0.4 + 0.4 * (-turn_bias)
-            right = 0.4 + 0.4 * (turn_bias)
+            left = 0.1 + 0.5 * (-turn_bias)
+            right = 0.1 + 0.5 * (turn_bias)
             return CommandWithImportance(-left, -right, 1.0)
 
         if self.turn_timer > 0:
@@ -94,7 +94,7 @@ class Controller(BaseController):
             return CommandWithImportance(0.1, 1.0, 1.0)
 
         # Trigger escape if strong force and not moving
-        if force_mag > 0.5 and velocity_mag < 0.25:
+        if force_mag > 0.3 and velocity_mag < 0.4:
             self.escape_timer = self.ESCAPE_DURATION
             self.turn_timer = self.TURN_DURATION
             # Direction to escape: +1 = left leg more contact → escape right
