@@ -27,7 +27,7 @@ def run_simulation(
     fly = CobarFly(
         debug=debug,
         enable_vision=True,
-        render_raw_vision=False,
+        render_raw_vision=True,
     )
 
     if level <= -1:
@@ -38,7 +38,7 @@ def run_simulation(
     else:
         # levels 2-4 need the timestep
         level_arena = levels[level](fly=fly, timestep=timestep, seed=seed)
-
+    
     cam_params = {"pos": (0, 0, 80)}
 
     cam = Camera(
@@ -73,11 +73,16 @@ def run_simulation(
         if controller.done_level(obs):
             # finish the path integration level
             break
-
-        if not obs["vision_updated"]:
-            if "raw_vision" in obs:
-                del obs["raw_vision"]
-        obs_hist.append(obs)
+            
+        obs_ = obs.copy()
+        if not obs_["vision_updated"]:
+            if "vision" in obs_:
+                del obs_["vision"]
+            if "raw_vision" in obs_:
+                del obs_["raw_vision"]
+        if "raw_vision" in info:
+            del info["raw_vision"]
+        obs_hist.append(obs_)
         info_hist.append(info)
 
         if hasattr(controller, "quit") and controller.quit:
