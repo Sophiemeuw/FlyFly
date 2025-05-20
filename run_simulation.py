@@ -27,7 +27,7 @@ def run_simulation(
     fly = CobarFly(
         debug=debug,
         enable_vision=True,
-        render_raw_vision=True,
+        render_raw_vision=False,
     )
 
     if level <= -1:
@@ -38,7 +38,7 @@ def run_simulation(
     else:
         # levels 2-4 need the timestep
         level_arena = levels[level](fly=fly, timestep=timestep, seed=seed)
-    
+
     cam_params = {"pos": (0, 0, 80)}
 
     cam = Camera(
@@ -75,8 +75,6 @@ def run_simulation(
             break
 
         if not obs["vision_updated"]:
-            if "vision" in obs:
-                del obs["vision"]
             if "raw_vision" in obs:
                 del obs["raw_vision"]
         obs_hist.append(obs)
