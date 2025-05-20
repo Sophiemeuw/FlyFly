@@ -22,102 +22,104 @@ class Controller(BaseController):
         # Odor taxis & CPG setup
         self.cpg_network = get_cpg(timestep=timestep, seed=seed)
         self.preprogrammed_steps = PreprogrammedSteps()
+        self.timestep = timestep
+        self.time = 0
 
-        # Position tracking
-        self.position = np.zeros(2)
-        self.position_trace = []
-        self.initial_position = np.zeros(2)
-
-        # Path integration state
-        self.leg_stance_history = [False] * 6
-        self.leg_stance_start_positions = [None] * 6
-        self.leg_displacements = [[] for _ in range(6)]
-        self.g = 0.3  # empirical gain
-
-        # Homing logic
-        self.reached_target = False
-        self.turning_timer = 0
-        self.turning_duration = int(1.0 / timestep)  # turn for ~1 second
-        self.begin_return = False
-        self.odor_threshold = 200
-        self.go_home = False
+        # Escape state
+        self.escape_timer = 0
+        self.turn_timer = 0
+        self.escape_direction = 0.0  # left - right signal
+        self.ESCAPE_DURATION = 1000
+        self.TURN_DURATION = 80
 
     def get_odor_taxis(self, obs: Observation) -> CommandWithImportance:
-        ODOR_GAIN, DELTA_MIN, DELTA_MAX, IMPORTANCE = -500, 0.2, 1.0, 0.5
-        I = obs["odor_intensity"][0]
-        I_left = (I[0] + I[2]) / 2
-        I_right = (I[1] + I[3]) / 2
-        asym = (I_left - I_right) / ((I_left + I_right + 1e-6) / 2)
-        s = asym * ODOR_GAIN
-        bias = abs(np.tanh(s))
+        ODOR_GAIN = -600
+        DELTA_MIN = 0.2
+        DELTA_MAX = 0.8
+        BASE_IMPORTANCE = 0.4
+        MAX_IMPORTANCE = 0.9
+
+        I_right = (obs["odor_intensity"][0][1] + obs["odor_intensity"][0][3]) / 2
+        I_left = (obs["odor_intensity"][0][0] + obs["odor_intensity"][0][2]) / 2
+        I_total = I_left + I_right
+        I_norm = min(I_total / 0.0015, 1.0)
+        importance = BASE_IMPORTANCE + (MAX_IMPORTANCE - BASE_IMPORTANCE) * I_norm
+
+        asymmetry = (I_left - I_right) / ((I_left + I_right + 1e-6) / 2)
+        s = asymmetry * ODOR_GAIN
+        turning_bias = np.abs(np.tanh(s))
+
         if s > 0:
-            right = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * bias
-            left = DELTA_MAX
+            right_descending_signal = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * turning_bias
+            left_descending_signal = DELTA_MAX
         else:
-            left = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * bias
-            right = DELTA_MAX
-        return CommandWithImportance(left, right, IMPORTANCE)
+            left_descending_signal = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * turning_bias
+            right_descending_signal = DELTA_MAX
 
-    def get_return_command(self, obs: Observation) -> CommandWithImportance:
-        DELTA_MIN, DELTA_MAX, IMPORTANCE = 0.2, 1.0, 1.0
-        vector = self.initial_position - self.position
-        angle_to_target = np.arctan2(vector[1], vector[0])
-        fly_heading = obs.get("heading", 0.0)
-        angle_diff = angle_to_target - fly_heading
-        angle_diff = np.arctan2(np.sin(angle_diff), np.cos(angle_diff))
-        turn = np.tanh(2.0 * angle_diff)
+        return CommandWithImportance(left_descending_signal, right_descending_signal, importance)
 
-        aligned_threshold = 0.2
-        if abs(angle_diff) < aligned_threshold:
-            return CommandWithImportance(DELTA_MAX, DELTA_MAX, IMPORTANCE)
-        else:
-            if turn > 0:
-                return CommandWithImportance(DELTA_MIN, DELTA_MAX, IMPORTANCE)
-            else:
-                return CommandWithImportance(DELTA_MAX, DELTA_MIN, IMPORTANCE)
-
-    def pillar_avoidance(self, obs: Observation, base_cmd: CommandWithImportance) -> CommandWithImportance:
-        MAX_DELTA = 1.0
+    def pillar_avoidance(self, obs: Observation, odor_taxis_command: CommandWithImportance) -> CommandWithImportance:
+        MAX_DELTA = 0.8
         MIN_DELTA = 0.2
-        IMPORTANCE = 0.7
-        GAIN = 22500
+        IMPORTANCE = 0.8
+        GAIN = 30000
 
         vision = obs["vision"]
         brightness = np.mean(vision, axis=2)
-
-        center = 360
-        std = 120
-        weights = np.exp(-((np.arange(721) - center) ** 2) / (2 * std**2))
-
-        left_weighted = np.sum(brightness[0] * weights)
-        right_weighted = np.sum(brightness[1] * weights)
-
+        left_weighted = np.sum(brightness[0])
+        right_weighted = np.sum(brightness[1])
         left_front = brightness[0, 620:]
         right_front = brightness[1, :100]
-        front_brightness = np.mean(np.concatenate([left_front, right_front]))
-
+        front_overlap_brightness = np.mean(np.concatenate([left_front, right_front]))
         left_side_brightness = np.mean(brightness[0, 500:620])
         right_side_brightness = np.mean(brightness[1, 100:220])
 
+        velocity_mag = np.linalg.norm(obs["velocity"][:2])
+        contact = obs["contact_forces"]
+
+        # Contact forces for front and middle legs
+        front_forces = contact[0][:2] + contact[3][:2]
+        middle_forces = contact[1][:2] + contact[4][:2]
+        total_force = front_forces + middle_forces
+        force_mag = np.linalg.norm(total_force)
+
+        # -------- ESCAPE MODE --------
+        if self.escape_timer > 0:
+            self.escape_timer -= 1
+            # Turn slightly away from the contact force vector
+            turn_bias = np.clip(self.escape_direction, -1, 1)
+            left = 0.1 + 0.5 * (-turn_bias)
+            right = 0.1 + 0.5 * (turn_bias)
+            return CommandWithImportance(-left, -right, 1.0)
+
+        if self.turn_timer > 0:
+            self.turn_timer -= 1
+            return CommandWithImportance(0.1, 1.0, 1.0)
+
+        # Trigger escape if strong force and not moving
+        if force_mag > 0.3 and velocity_mag < 0.4:
+            self.escape_timer = self.ESCAPE_DURATION
+            self.turn_timer = self.TURN_DURATION
+            # Direction to escape: +1 = left leg more contact → escape right
+            #                     -1 = right leg more contact → escape left
+            escape_vector = total_force
+            self.escape_direction = np.sign(escape_vector[0])  # x-axis as directional hint
+            return CommandWithImportance(-0.6, -0.6, 1.0)
+
+        # Visual emergency
         if (
-            front_brightness < 5
+            front_overlap_brightness < 10
             or left_side_brightness < 3
             or right_side_brightness < 3
-        ) and np.linalg.norm(obs["velocity"][:2]) < 0.5:
-
+        ) and velocity_mag < 0.2:
             if left_side_brightness < right_side_brightness:
-                left_signal = 0.3
+                left_signal = 0.1
                 right_signal = 1.0
             elif right_side_brightness < left_side_brightness:
                 left_signal = 1.0
-                right_signal = 0.3
+                right_signal = 0.1
             else:
-                if random.random() < 0.5:
-                    left_signal = 1.0
-                    right_signal = 0.3
-                else:
-                    left_signal = 0.3
-                    right_signal = 1.0
+                left_signal, right_signal = (1.0, 0.1) if random.random() < 0.5 else (0.1, 1.0)
 
             return CommandWithImportance(
                 IMPORTANCE * left_signal + (1 - IMPORTANCE) * base_cmd.left_descending_signal,
@@ -125,16 +127,16 @@ class Controller(BaseController):
                 IMPORTANCE
             )
 
+        # Regular vision-based turning
         diff = left_weighted - right_weighted
-        turn_signal = np.tanh(GAIN * diff)
-        turn_signal += np.random.uniform(-0.05, 0.05)
+        turn_signal = np.tanh(GAIN * diff) + np.random.uniform(-0.05, 0.05)
 
         left_signal = MAX_DELTA
         right_signal = MAX_DELTA
         if turn_signal > 0:
-            left_signal = MAX_DELTA - (MAX_DELTA - MIN_DELTA) * abs(turn_signal)
+            left_signal -= (MAX_DELTA - MIN_DELTA) * abs(turn_signal)
         else:
-            right_signal = MAX_DELTA - (MAX_DELTA - MIN_DELTA) * abs(turn_signal)
+            right_signal -= (MAX_DELTA - MIN_DELTA) * abs(turn_signal)
 
         left_descending_signal = (
             IMPORTANCE * left_signal + base_cmd.importance * base_cmd.left_descending_signal
@@ -144,7 +146,8 @@ class Controller(BaseController):
         )
 
         return CommandWithImportance(left_descending_signal, right_descending_signal, IMPORTANCE)
-
+    def ball_avoidance(self, obs: Observation) -> CommandWithImportance:
+        return CommandWithImportance(0, 0, 0)
     def integrate_displacement(self, obs: Observation):
         legs = obs["end_effectors"]
         forces = obs["contact_forces"]
@@ -183,6 +186,14 @@ class Controller(BaseController):
         self.time += self.timestep
         self.integrate_displacement(obs)
         self.position_trace.append(self.position.copy())
+
+        odor_taxis_command = self.get_odor_taxis(obs)
+        combined_command = self.pillar_avoidance(obs, odor_taxis_command)
+
+        action = np.array([
+            combined_command.left_descending_signal,
+            combined_command.right_descending_signal,
+        ])
 
         if self.time < self.timestep * 2:
             self.initial_position = self.position.copy()
@@ -241,3 +252,6 @@ class Controller(BaseController):
         self.begin_return = False
         self.go_home = False
         self.initial_position = np.zeros(2)
+        self.escape_timer = 0
+        self.turn_timer = 0
+        self.escape_direction = 0.0
