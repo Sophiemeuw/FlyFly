@@ -1,6 +1,5 @@
 import numpy as np
 import random
-import sys  # <-- Add this import
 from cobar_miniproject.base_controller import Action, BaseController, Observation
 from .utils import get_cpg, step_cpg
 from typing import NamedTuple
@@ -32,8 +31,7 @@ class Controller(BaseController):
 
         # Path integration variables
         self.heading = 0.0
-        self.position = np.zeros(2)
-        self.initial_position = None
+        self.integrated_position = np.zeros(2)
         self.reached_target = False
         self.go_home = False
         self.odor_threshold = 0.2  # Set as appropriate for your environment
@@ -41,8 +39,14 @@ class Controller(BaseController):
         self.turning_steps = 0
         self.max_turning_steps = 100  # Number of steps to turn 180°
         self.homing_done = False
+
+        self.action = np.array([0, 0])
         
         self.min_home = 100
+        self.itr = 0
+
+    def get_integrated_position(self) -> np.ndarray:
+        return self.integrated_position.copy()
 
     def get_odor_taxis(self, obs: Observation) -> CommandWithImportance:
         ODOR_GAIN = -600
@@ -159,6 +163,22 @@ class Controller(BaseController):
 
         return CommandWithImportance(left_descending_signal, right_descending_signal, IMPORTANCE)
 
+    def path_integration(self, obs: Observation): 
+        heading = obs["heading"].copy()
+        vel = obs["velocity"].copy()
+
+        rot_matrix = np.array(
+            [
+                [np.cos(heading), -np.sin(heading)],
+                [np.sin(heading), np.cos(heading)]
+            ]
+        )
+
+        world_frame_vel = rot_matrix @ vel.ravel()
+        self.integrated_position += world_frame_vel * self.timestep
+
+        
+
     def ball_avoidance(self, obs: Observation) -> CommandWithImportance:
         return CommandWithImportance(0, 0, 0)
 
@@ -171,16 +191,35 @@ class Controller(BaseController):
                 "joints": joint_angles,
                 "adhesion": adhesion,
             }
-
+        self.itr += 1
         self.time += self.timestep
 
-        # Update heading and position from observation
-        self.heading = obs["heading"]
-        self.position = np.array(obs["fly"][0][:2])
+        if self.itr > 100: 
+            # if self.action[0] == self.action[1]:
+            #     self.action = np.array([0.5, 1])
+            # else:
+            self.action = np.array([1, 1])
+            # self.action = np.array([np.random.random(), np.random.random()])
+            # print(f"New action: {self.action}")
+        
 
-        # Store initial position at the start
-        if self.initial_position is None:
-            self.initial_position = self.position.copy()
+        # Update heading and position from observation
+        self.heading = obs["heading"].copy()
+        self.path_integration(obs)
+
+        joint_angles, adhesion = step_cpg(
+                cpg_network=self.cpg_network,
+                preprogrammed_steps=self.preprogrammed_steps,
+                action=self.action,
+        )
+
+
+        return {
+                "joints": joint_angles,
+                "adhesion": adhesion,
+        }
+
+        
 
         # Check if odor source is reached
         odor_intensity = np.mean(obs["odor_intensity"])
@@ -209,28 +248,16 @@ class Controller(BaseController):
         # Homing: go back to initial position
         if self.go_home and not self.homing_done:
             # Compute vector to home
-            to_home = self.initial_position - self.position
+            to_home =  -self.integrated_position
             dist_to_home = np.linalg.norm(to_home)
-            
-            # if self.time % 0.1 < 0.001:
-            #     print(f"Distance to home: {dist_to_home:.4f}")
 
             if dist_to_home < 4:  # Close enough, stop
-
                 # End the simulation when the fly returns to the drop position after reaching the odor source
                 self.homing_done = True
                 self.quit = True
                 joint_angles = obs["joints"] if "joints" in obs else np.zeros_like(self.preprogrammed_steps.default_joint_angles)
                 adhesion = np.ones(6)
                 print("Homing done, quitting simulation.")
-
-                # return {
-                #     "joints": joint_angles,
-                #     "adhesion": adhesion,
-                # }
-                
-
-
 
             # Compute desired heading
             desired_heading = np.arctan2(to_home[1], to_home[0])
@@ -279,7 +306,6 @@ class Controller(BaseController):
         self.turn_timer = 0
         self.escape_direction = 0.0
         self.heading = 0.0
-        self.position = np.zeros(2)
         self.initial_position = None
         self.reached_target = False
         self.go_home = False
