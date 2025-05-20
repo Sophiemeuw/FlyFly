@@ -74,7 +74,7 @@ class Controller(BaseController):
         MAX_DELTA = 0.8
         MIN_DELTA = 0.2
         IMPORTANCE = 0.9
-        GAIN = 35000
+        GAIN = 40000
 
         vision = obs["vision"]
         brightness = np.mean(vision, axis=2)
@@ -215,7 +215,7 @@ class Controller(BaseController):
             # if self.time % 0.1 < 0.001:
             #     print(f"Distance to home: {dist_to_home:.4f}")
 
-            if dist_to_home < 5:  # Close enough, stop
+            if dist_to_home < 4:  # Close enough, stop
 
                 # End the simulation when the fly returns to the drop position after reaching the odor source
                 self.homing_done = True
@@ -224,11 +224,14 @@ class Controller(BaseController):
                 adhesion = np.ones(6)
                 print("Homing done, quitting simulation.")
 
-                return {
-                    "joints": joint_angles,
-                    "adhesion": adhesion,
-                }
+                # return {
+                #     "joints": joint_angles,
+                #     "adhesion": adhesion,
+                # }
                 
+
+
+
             # Compute desired heading
             desired_heading = np.arctan2(to_home[1], to_home[0])
             heading_error = desired_heading - self.heading

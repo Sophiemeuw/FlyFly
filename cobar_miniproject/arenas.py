@@ -254,7 +254,7 @@ class OdorTargetOnlyArena(ObstacleOdorArena):
     def step(self, dt, physics):
         fly_pos = physics.bind(self.fly._body_sensors[0]).sensordata[:2].copy()
         if np.linalg.norm(self.target_position - fly_pos) < self.to_target_distance:
-            self.quit = True
+            self.quit = False
 
     def reset(self, physics, seed=None):
         """Reset the environment and optionally reseed."""
