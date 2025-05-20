@@ -13,7 +13,7 @@ class CommandWithImportance(NamedTuple):
 
 class Controller(BaseController):
     def __init__(self, timestep=1e-4, seed=0):
-        from flygym.examples.locomotion import PreprogrammedSteps
+        from .preprogrammed_steps import PreprogrammedSteps
 
         super().__init__()
         self.quit = False
