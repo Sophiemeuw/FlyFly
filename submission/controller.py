@@ -1,5 +1,6 @@
 import numpy as np
 import random
+import sys  # <-- Add this import
 from cobar_miniproject.base_controller import Action, BaseController, Observation
 from .utils import get_cpg, step_cpg
 from typing import NamedTuple
@@ -40,6 +41,8 @@ class Controller(BaseController):
         self.turning_steps = 0
         self.max_turning_steps = 100  # Number of steps to turn 180°
         self.homing_done = False
+        
+        self.min_home = 100
 
     def get_odor_taxis(self, obs: Observation) -> CommandWithImportance:
         ODOR_GAIN = -600
@@ -70,8 +73,8 @@ class Controller(BaseController):
     def pillar_avoidance(self, obs: Observation, odor_taxis_command: CommandWithImportance) -> CommandWithImportance:
         MAX_DELTA = 0.8
         MIN_DELTA = 0.2
-        IMPORTANCE = 0.8
-        GAIN = 30000
+        IMPORTANCE = 0.9
+        GAIN = 35000
 
         vision = obs["vision"]
         brightness = np.mean(vision, axis=2)
@@ -160,6 +163,15 @@ class Controller(BaseController):
         return CommandWithImportance(0, 0, 0)
 
     def get_actions(self, obs: Observation) -> Action:
+        # End the level if done_level is True
+        if self.done_level(obs):
+            joint_angles = obs["joints"] if "joints" in obs else np.zeros_like(self.preprogrammed_steps.default_joint_angles)
+            adhesion = np.ones(6)
+            return {
+                "joints": joint_angles,
+                "adhesion": adhesion,
+            }
+
         self.time += self.timestep
 
         # Update heading and position from observation
@@ -199,14 +211,24 @@ class Controller(BaseController):
             # Compute vector to home
             to_home = self.initial_position - self.position
             dist_to_home = np.linalg.norm(to_home)
-            if dist_to_home < 0.01:  # Close enough, stop
+            
+            # if self.time % 0.1 < 0.001:
+            #     print(f"Distance to home: {dist_to_home:.4f}")
+
+            if dist_to_home < 5:  # Close enough, stop
+
+                # End the simulation when the fly returns to the drop position after reaching the odor source
                 self.homing_done = True
+                self.quit = True
                 joint_angles = obs["joints"] if "joints" in obs else np.zeros_like(self.preprogrammed_steps.default_joint_angles)
                 adhesion = np.ones(6)
+                print("Homing done, quitting simulation.")
+
                 return {
                     "joints": joint_angles,
                     "adhesion": adhesion,
                 }
+                
             # Compute desired heading
             desired_heading = np.arctan2(to_home[1], to_home[0])
             heading_error = desired_heading - self.heading
