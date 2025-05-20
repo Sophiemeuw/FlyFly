@@ -187,26 +187,33 @@ class Controller(BaseController):
         if self.time < self.timestep * 2:
             self.initial_position = self.position.copy()
 
+        # --- Odor source reached: stop and prepare to turn ---
         if not self.reached_target and np.mean(obs["odor_intensity"]) > self.odor_threshold:
             self.reached_target = True
             self.turning_timer = self.turning_duration
+            self.arrival_heading = obs["heading"]  # Store heading at arrival
 
-        if self.reached_target and self.turning_timer > 0:
-            self.turning_timer -= 1
-            vector = self.initial_position - self.position
-            angle_to_target = np.arctan2(vector[1], vector[0])
-            fly_heading = obs.get("heading", 0.0)
-            angle_diff = angle_to_target - fly_heading
+        # --- Turning in place 180 degrees ---
+        if self.reached_target and not self.go_home:
+            # Calculate desired heading (180 deg from arrival)
+            desired_heading = (self.arrival_heading + np.pi) % (2 * np.pi)
+            current_heading = obs.get("heading", 0.0)
+            angle_diff = desired_heading - current_heading
             angle_diff = np.arctan2(np.sin(angle_diff), np.cos(angle_diff))
-            if abs(angle_diff) < 0.2:
+            # If not yet facing away, keep turning in place
+            if abs(angle_diff) > 0.1:
+                # Turn in place: left=0, right=1 (or vice versa)
+                turn_action = np.array([0.0, 1.0]) if angle_diff > 0 else np.array([1.0, 0.0])
+                joint_angles, adhesion = step_cpg(self.cpg_network, self.preprogrammed_steps, turn_action)
+                return {
+                    "joints": joint_angles,
+                    "adhesion": adhesion
+                }
+            else:
+                # Finished turning, start homing
                 self.go_home = True
 
-            joint_angles, adhesion = step_cpg(self.cpg_network, self.preprogrammed_steps, np.array([0.0, 1.0]))
-            return {
-                "joints": joint_angles,
-                "adhesion": adhesion
-            }
-
+        # --- Homing phase ---
         if self.go_home:
             base_cmd = self.get_return_command(obs)
         elif not self.reached_target:
