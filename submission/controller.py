@@ -166,6 +166,7 @@ class Controller(BaseController):
     def path_integration(self, obs: Observation): 
         heading = obs["heading"].copy()
         vel = obs["velocity"].copy()
+        heading = -heading
 
         rot_matrix = np.array(
             [
@@ -174,7 +175,7 @@ class Controller(BaseController):
             ]
         )
 
-        world_frame_vel = rot_matrix @ vel.ravel()
+        world_frame_vel = vel.ravel() @ rot_matrix
         self.integrated_position += world_frame_vel * self.timestep
 
         
