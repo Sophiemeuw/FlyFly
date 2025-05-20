@@ -26,6 +26,7 @@ class Controller(BaseController):
         # Position tracking
         self.position = np.zeros(2)
         self.position_trace = []
+        self.initial_position = np.zeros(2)
 
         # Path integration state
         self.leg_stance_history = [False] * 6
@@ -39,7 +40,7 @@ class Controller(BaseController):
         self.turning_duration = int(1.0 / timestep)  # turn for ~1 second
         self.begin_return = False
         self.odor_threshold = 200
-        self.retrace_index = None
+        self.go_home = False
 
     def get_odor_taxis(self, obs: Observation) -> CommandWithImportance:
         ODOR_GAIN, DELTA_MIN, DELTA_MAX, IMPORTANCE = -500, 0.2, 1.0, 0.5
@@ -57,34 +58,23 @@ class Controller(BaseController):
             right = DELTA_MAX
         return CommandWithImportance(left, right, IMPORTANCE)
 
-    def get_retrace_command(self, obs: Observation) -> CommandWithImportance:
-        IMPORTANCE = 1.0
-        DELTA_MIN, DELTA_MAX = 0.2, 1.0
-        GAIN = 2.0
-
-        if self.retrace_index is None or self.retrace_index < 0:
-            return CommandWithImportance(1.0, 1.0, IMPORTANCE)
-
-        target_pos = self.position_trace[self.retrace_index]
-        vector = target_pos - self.position
+    def get_return_command(self, obs: Observation) -> CommandWithImportance:
+        DELTA_MIN, DELTA_MAX, IMPORTANCE = 0.2, 1.0, 1.0
+        vector = self.initial_position - self.position
         angle_to_target = np.arctan2(vector[1], vector[0])
         fly_heading = obs.get("heading", 0.0)
         angle_diff = angle_to_target - fly_heading
         angle_diff = np.arctan2(np.sin(angle_diff), np.cos(angle_diff))
+        turn = np.tanh(2.0 * angle_diff)
 
-        turn = np.tanh(GAIN * angle_diff)
-
-        left = DELTA_MAX
-        right = DELTA_MAX
-        if turn > 0:
-            left = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * abs(turn)
+        aligned_threshold = 0.2
+        if abs(angle_diff) < aligned_threshold:
+            return CommandWithImportance(DELTA_MAX, DELTA_MAX, IMPORTANCE)
         else:
-            right = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * abs(turn)
-
-        if np.linalg.norm(vector) < 0.03 and self.retrace_index > 0:
-            self.retrace_index -= 1
-
-        return CommandWithImportance(left, right, IMPORTANCE)
+            if turn > 0:
+                return CommandWithImportance(DELTA_MIN, DELTA_MAX, IMPORTANCE)
+            else:
+                return CommandWithImportance(DELTA_MAX, DELTA_MIN, IMPORTANCE)
 
     def pillar_avoidance(self, obs: Observation, base_cmd: CommandWithImportance) -> CommandWithImportance:
         MAX_DELTA = 1.0
@@ -186,30 +176,43 @@ class Controller(BaseController):
         self.leg_displacements = [[] for _ in range(6)]
 
     def get_actions(self, obs: Observation) -> Action:
+        # Update heading and position from external state
+        self.heading = obs["heading"]
+        self.position = np.array(obs["fly"][0][:2])
+
         self.time += self.timestep
         self.integrate_displacement(obs)
         self.position_trace.append(self.position.copy())
+
+        if self.time < self.timestep * 2:
+            self.initial_position = self.position.copy()
 
         if not self.reached_target and np.mean(obs["odor_intensity"]) > self.odor_threshold:
             self.reached_target = True
             self.turning_timer = self.turning_duration
 
         if self.reached_target and self.turning_timer > 0:
-            self.turning_timer -= 5
+            self.turning_timer -= 1
+            vector = self.initial_position - self.position
+            angle_to_target = np.arctan2(vector[1], vector[0])
+            fly_heading = obs.get("heading", 0.0)
+            angle_diff = angle_to_target - fly_heading
+            angle_diff = np.arctan2(np.sin(angle_diff), np.cos(angle_diff))
+            if abs(angle_diff) < 0.2:
+                self.go_home = True
+
             joint_angles, adhesion = step_cpg(self.cpg_network, self.preprogrammed_steps, np.array([0.0, 1.0]))
             return {
                 "joints": joint_angles,
                 "adhesion": adhesion
             }
 
-        if self.reached_target and not self.begin_return:
-            self.begin_return = True
-            self.retrace_index = len(self.position_trace) - 1
-
-        if not self.reached_target:
+        if self.go_home:
+            base_cmd = self.get_return_command(obs)
+        elif not self.reached_target:
             base_cmd = self.get_odor_taxis(obs)
         else:
-            base_cmd = self.get_retrace_command(obs)
+            base_cmd = CommandWithImportance(0.0, 1.0, 1.0)  # default turning while waiting
 
         combined_cmd = self.pillar_avoidance(obs, base_cmd)
         action = np.array([combined_cmd.left_descending_signal, combined_cmd.right_descending_signal])
@@ -217,7 +220,7 @@ class Controller(BaseController):
         return {"joints": joint_angles, "adhesion": adhesion}
 
     def done_level(self, obs: Observation):
-        return self.reached_target and self.retrace_index == 0
+        return self.go_home and np.linalg.norm(self.position - self.initial_position) < 0.02
 
     def reset(self, **kwargs):
         self.cpg_network.reset()
@@ -229,4 +232,5 @@ class Controller(BaseController):
         self.reached_target = False
         self.turning_timer = 0
         self.begin_return = False
-        self.retrace_index = None
+        self.go_home = False
+        self.initial_position = np.zeros(2)
