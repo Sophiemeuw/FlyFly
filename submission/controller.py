@@ -29,6 +29,18 @@ class Controller(BaseController):
         self.ESCAPE_DURATION = 1000
         self.TURN_DURATION = 80
 
+        # Path integration variables
+        self.heading = 0.0
+        self.position = np.zeros(2)
+        self.initial_position = None
+        self.reached_target = False
+        self.go_home = False
+        self.odor_threshold = 0.2  # Set as appropriate for your environment
+        self.turning = False
+        self.turning_steps = 0
+        self.max_turning_steps = 100  # Number of steps to turn 180°
+        self.homing_done = False
+
     def get_odor_taxis(self, obs: Observation) -> CommandWithImportance:
         ODOR_GAIN = -600
         DELTA_MIN = 0.2
@@ -149,30 +161,103 @@ class Controller(BaseController):
 
     def get_actions(self, obs: Observation) -> Action:
         self.time += self.timestep
+
+        # Update heading and position from observation
+        self.heading = obs["heading"]
+        self.position = np.array(obs["fly"][0][:2])
+
+        # Store initial position at the start
+        if self.initial_position is None:
+            self.initial_position = self.position.copy()
+
+        # Check if odor source is reached
+        odor_intensity = np.mean(obs["odor_intensity"])
+        if not self.reached_target and odor_intensity > self.odor_threshold:
+            self.reached_target = True
+            self.turning = True
+            self.turning_steps = 0
+
+        # Stop and turn 180° at odor source
+        if self.reached_target and self.turning and self.turning_steps < self.max_turning_steps:
+            self.turning_steps += 1
+            # Turn in place: left=0, right=1 (or vice versa)
+            joint_angles, adhesion = step_cpg(
+                cpg_network=self.cpg_network,
+                preprogrammed_steps=self.preprogrammed_steps,
+                action=np.array([0.0, 1.0])
+            )
+            if self.turning_steps >= self.max_turning_steps:
+                self.turning = False
+                self.go_home = True
+            return {
+                "joints": joint_angles,
+                "adhesion": adhesion,
+            }
+
+        # Homing: go back to initial position
+        if self.go_home and not self.homing_done:
+            # Compute vector to home
+            to_home = self.initial_position - self.position
+            dist_to_home = np.linalg.norm(to_home)
+            if dist_to_home < 0.01:  # Close enough, stop
+                self.homing_done = True
+                joint_angles = obs["joints"] if "joints" in obs else np.zeros_like(self.preprogrammed_steps.default_joint_angles)
+                adhesion = np.ones(6)
+                return {
+                    "joints": joint_angles,
+                    "adhesion": adhesion,
+                }
+            # Compute desired heading
+            desired_heading = np.arctan2(to_home[1], to_home[0])
+            heading_error = desired_heading - self.heading
+            heading_error = np.arctan2(np.sin(heading_error), np.cos(heading_error))
+            # Simple proportional controller for turning
+            if abs(heading_error) > 0.1:
+                # Turn towards home
+                action = np.array([0.0, 1.0]) if heading_error > 0 else np.array([1.0, 0.0])
+            else:
+                # Move forward
+                action = np.array([1.0, 1.0])
+            joint_angles, adhesion = step_cpg(
+                cpg_network=self.cpg_network,
+                preprogrammed_steps=self.preprogrammed_steps,
+                action=action,
+            )
+            return {
+                "joints": joint_angles,
+                "adhesion": adhesion,
+            }
+
+        # Normal behavior (odor taxis + pillar avoidance)
         odor_taxis_command = self.get_odor_taxis(obs)
         combined_command = self.pillar_avoidance(obs, odor_taxis_command)
-
         action = np.array([
             combined_command.left_descending_signal,
             combined_command.right_descending_signal,
         ])
-
         joint_angles, adhesion = step_cpg(
             cpg_network=self.cpg_network,
             preprogrammed_steps=self.preprogrammed_steps,
             action=action,
         )
-
         return {
             "joints": joint_angles,
             "adhesion": adhesion,
         }
 
     def done_level(self, obs: Observation):
-        return self.quit
+        return self.quit or self.homing_done
 
     def reset(self, **kwargs):
         self.cpg_network.reset()
         self.escape_timer = 0
         self.turn_timer = 0
         self.escape_direction = 0.0
+        self.heading = 0.0
+        self.position = np.zeros(2)
+        self.initial_position = None
+        self.reached_target = False
+        self.go_home = False
+        self.turning = False
+        self.turning_steps = 0
+        self.homing_done = False
