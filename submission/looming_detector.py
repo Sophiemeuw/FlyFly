@@ -18,12 +18,13 @@ class RawVideoHandler:
         self.retina = retina
 
     def _make_new_writer(self, name, frame_type):
+        fps = 10
         print(f"Making new writer with name {name}")
         path = Path("debug") / f"{self.file_name_prefix}_{name}.mp4"
         os.makedirs(path.parent, exist_ok=True)
 
         self.writers[name] = {
-            "writer": imageio.get_writer(path),
+            "writer": imageio.get_writer(path, fps=fps),
             "pending_frame": None,
             "frame_type": frame_type,
         }
@@ -150,12 +151,13 @@ def project_all_to_rect(id_map, images):
 
 class LoomDetector:
     def __init__(self, input_size: tuple, debug=False):
+        self.DELAY_FRAME = 5
         TS = 0.01
         HPF_TAU = 0.01
         HPF_CORNER = 1 / (2 * np.pi * HPF_TAU)
         BUF_SIZE = 10
 
-        LFP_TAU = 0.050
+        LFP_TAU = 0.005
         LPF_CORNER = 1 / (2 * np.pi * LFP_TAU)
 
         self.retina = Retina()
@@ -177,9 +179,11 @@ class LoomDetector:
         )
 
         self.hpf_history = deque([np.zeros(self.retina.ommatidia_id_map.shape)], 10)
-        self.on_rect_history = deque([np.zeros(self.retina.ommatidia_id_map.shape)], 10)
+        self.on_rect_history = deque(
+            [np.zeros(self.retina.ommatidia_id_map.shape)], self.DELAY_FRAME
+        )
         self.off_rect_history = deque(
-            [np.zeros(self.retina.ommatidia_id_map.shape)], 10
+            [np.zeros(self.retina.ommatidia_id_map.shape)], self.DELAY_FRAME
         )
 
         self.lpf_on_history = deque(
@@ -356,14 +360,11 @@ class LoomDetector:
         # first order hpf in pipeline
         self.hpf_history.appendleft(hpf)
 
-        on_rect = self.edge_rectification(hpf, 10, RectificationType.ON)
+        on_rect = self.edge_rectification(hpf, 5, RectificationType.ON)
         off_rect = self.edge_rectification(hpf, 5, RectificationType.OFF)
 
         on_last, lpf_on_last = self.lpf_on_history[0]
         off_last, lpf_off_last = self.lpf_off_history[0]
-
-        self.on_rect_history.appendleft(on_rect)
-        self.off_rect_history.appendleft(off_rect)
 
         lpf_on = (
             self.lpf_b[0] * on_rect
@@ -376,17 +377,24 @@ class LoomDetector:
             - self.lpf_a[1] * lpf_off_last
         ) / self.lpf_a[0]
 
+        self.on_rect_history.appendleft(lpf_on)
+        self.off_rect_history.appendleft(lpf_off)
+        # maybe lpf before all of this to remove jitteryness??
+
         self.lpf_on_history.appendleft((on_rect, lpf_on))
         self.lpf_off_history.appendleft((off_rect, lpf_off))
 
         combined = on_rect + off_rect
 
-        if self.frames_recvd < 10:
+        if self.frames_recvd < self.DELAY_FRAME:
             print("Accumulating frames...")
             return
 
         on_path, off_path = self.make_motion_detector_images(
-            on_rect, off_rect, self.on_rect_history[9], self.off_rect_history[9]
+            lpf_on,
+            lpf_off,
+            self.on_rect_history[self.DELAY_FRAME - 1],
+            self.off_rect_history[self.DELAY_FRAME - 1],
         )
 
         # if self.frames_recvd % 50 == 0:
@@ -397,9 +405,15 @@ class LoomDetector:
             self.rvh.add_frame(np.hstack(list(self.frame_buffer[0])), "first_pass")
             self.rvh.add_frame(np.hstack(list(self.hpf_history[0])), "first_pass")
             self.rvh.add_frame(np.hstack(list(on_rect)), "first_pass")
-            self.rvh.add_frame(np.hstack(list(self.on_rect_history[9])), "first_pass")
+            self.rvh.add_frame(
+                np.hstack(list(self.on_rect_history[self.DELAY_FRAME - 1])),
+                "first_pass",
+            )
             self.rvh.add_frame(np.hstack(list(off_rect)), "first_pass")
-            self.rvh.add_frame(np.hstack(list(self.off_rect_history[9])), "first_pass")
+            self.rvh.add_frame(
+                np.hstack(list(self.off_rect_history[self.DELAY_FRAME - 1])),
+                "first_pass",
+            )
 
             on_path = 255 * (on_path / on_path.max())
             off_path = 255 * (off_path / off_path.max())
