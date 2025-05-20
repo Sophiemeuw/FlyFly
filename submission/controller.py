@@ -39,11 +39,8 @@ class Controller(BaseController):
         self.turning_steps = 0
         self.max_turning_steps = 100  # Number of steps to turn 180°
         self.homing_done = False
-
-        self.action = np.array([0, 0])
         
         self.min_home = 100
-        self.itr = 0
 
     def get_integrated_position(self) -> np.ndarray:
         return self.integrated_position.copy()
@@ -192,35 +189,12 @@ class Controller(BaseController):
                 "joints": joint_angles,
                 "adhesion": adhesion,
             }
-        self.itr += 1
-        self.time += self.timestep
 
-        if self.itr > 100: 
-            # if self.action[0] == self.action[1]:
-            #     self.action = np.array([0.5, 1])
-            # else:
-            self.action = np.array([1, 1])
-            # self.action = np.array([np.random.random(), np.random.random()])
-            # print(f"New action: {self.action}")
-        
+        self.time += self.timestep        
 
         # Update heading and position from observation
         self.heading = obs["heading"].copy()
         self.path_integration(obs)
-
-        joint_angles, adhesion = step_cpg(
-                cpg_network=self.cpg_network,
-                preprogrammed_steps=self.preprogrammed_steps,
-                action=self.action,
-        )
-
-
-        return {
-                "joints": joint_angles,
-                "adhesion": adhesion,
-        }
-
-        
 
         # Check if odor source is reached
         odor_intensity = np.mean(obs["odor_intensity"])
