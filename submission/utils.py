@@ -30,11 +30,12 @@ def get_cpg(timestep, seed=0):
 
 
 def step_cpg(cpg_network, preprogrammed_steps, action):
-    
     amps = np.repeat(np.abs(action[:, np.newaxis]), 3, axis=1).ravel()
+
     freqs = np.abs(cpg_network.intrinsic_freqs)
     freqs[:3] *= 1 if action[0] > 0 else -1
     freqs[3:] *= 1 if action[1] > 0 else -1
+
     cpg_network.intrinsic_amps = amps
     cpg_network.intrinsic_freqs = freqs
     cpg_network.step()
@@ -43,11 +44,14 @@ def step_cpg(cpg_network, preprogrammed_steps, action):
     adhesion_onoff = []
 
     for i, leg in enumerate(preprogrammed_steps.legs):
+        reverse = freqs[i] < 0  # Use reversed gait if frequency is negative
+
         # get target angles from CPGs and apply correction
         my_joints_angles = preprogrammed_steps.get_joint_angles(
             leg,
             cpg_network.curr_phases[i],
             cpg_network.curr_magnitudes[i],
+            reverse=reverse
         )
         joints_angles.append(my_joints_angles)
 
