@@ -9,6 +9,7 @@ from copy import deepcopy
 from flygym.vision import Retina
 from PIL import Image
 import numba as nb
+import cv2
 
 
 class RawVideoHandler:
@@ -64,7 +65,7 @@ class RawVideoHandler:
         else:
             writer["pending_frame"] = np.vstack((writer["pending_frame"], frame))
 
-    def commit_frame(self):
+    def commit_frame(self, frameno):
         for writer in self.writers.values():
             pending_frame = writer["pending_frame"]
             if type(pending_frame) is np.ndarray:
@@ -95,6 +96,36 @@ class RawVideoHandler:
                         mode="constant",
                         constant_values=0,
                     )
+
+                # Add frame number in yellow at the top right
+                frameno_str = str(frameno)
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 1
+                thickness = 2
+                color = (255, 255, 0)  # Yellow in BGR
+
+                # Calculate text size to position at top right
+                (text_width, text_height), _ = cv2.getTextSize(
+                    frameno_str, font, font_scale, thickness
+                )
+                x = pending_frame.shape[1] - text_width - 10
+                y = text_height + 10
+
+                if (
+                    pending_frame.ndim == 2
+                ):  # grayscale, convert to 3-channel for color text
+                    pending_frame = cv2.cvtColor(pending_frame, cv2.COLOR_GRAY2BGR)
+
+                cv2.putText(
+                    pending_frame,
+                    frameno_str,
+                    (x, y),
+                    font,
+                    font_scale,
+                    color,
+                    thickness,
+                    cv2.LINE_AA,
+                )
 
                 writer["writer"].append_data(pending_frame)
                 writer["pending_frame"] = None
@@ -169,7 +200,8 @@ class LoomDetector:
             BUF_SIZE,
         )
 
-        self.emd_signals = {dir: 0 for dir in EMDDirection}
+        self.percent_off = deque([(0.0, 0.0) for _ in range(BUF_SIZE)], BUF_SIZE)
+
         self.hpf_b, self.hpf_a = scipy.signal.butter(
             1, HPF_CORNER, "high", output="ba", fs=1 / TS
         )
@@ -213,6 +245,9 @@ class LoomDetector:
         for dir in EMDDirection:
             self.kernels[dir] = self.create_kernel(dir)
 
+        self.flat_pix_mask = self.retina.ommatidia_id_map[
+            self.retina.ommatidia_id_map >= 0
+        ]
         if debug:
             self.rvh = RawVideoHandler("hpf", self.retina)
 
@@ -351,121 +386,39 @@ class LoomDetector:
 
         self.frame_buffer.appendleft(images)
 
-        hpf = (
-            self.hpf_b[0] * (images)
-            + self.hpf_b[1] * self.frame_buffer[1]
-            - self.hpf_a[1] * self.hpf_history[0]
-        ) / self.hpf_a[0]
-
-        # first order hpf in pipeline
-        self.hpf_history.appendleft(hpf)
-
-        on_rect = self.edge_rectification(hpf, 5, RectificationType.ON)
-        off_rect = self.edge_rectification(hpf, 5, RectificationType.OFF)
-
-        on_last, lpf_on_last = self.lpf_on_history[0]
-        off_last, lpf_off_last = self.lpf_off_history[0]
-
-        lpf_on = (
-            self.lpf_b[0] * on_rect
-            + self.lpf_b[1] * on_last
-            - self.lpf_a[1] * lpf_on_last
-        ) / self.lpf_a[0]
-        lpf_off = (
-            self.lpf_b[0] * off_rect
-            + self.lpf_b[1] * off_last
-            - self.lpf_a[1] * lpf_off_last
-        ) / self.lpf_a[0]
-
-        self.on_rect_history.appendleft(lpf_on)
-        self.off_rect_history.appendleft(lpf_off)
-        # maybe lpf before all of this to remove jitteryness??
-
-        self.lpf_on_history.appendleft((on_rect, lpf_on))
-        self.lpf_off_history.appendleft((off_rect, lpf_off))
-
-        combined = on_rect + off_rect
-
         if self.frames_recvd < self.DELAY_FRAME:
             print("Accumulating frames...")
             return
 
-        on_path, off_path = self.make_motion_detector_images(
-            lpf_on,
-            lpf_off,
-            self.on_rect_history[self.DELAY_FRAME - 1],
-            self.off_rect_history[self.DELAY_FRAME - 1],
-        )
+        # check for loom...
+        # 1. if the amount of covered area is rising in one eye, then there is loom likely.
+        # 2. if the amount of dark pixels is greater than 40% of the frame then its an emergency!
+
+        left, right = images[0, :, :], images[1, :, :]
+
+        off = self.edge_rectification(images, 30, RectificationType.OFF)
+        left_off, right_off = off[0, :, :], off[1, :, :]
+
+        left_percent_off = (
+            left_off[left_off > 0].size / left_off.size - 0.26
+        )  # remove the outside mask
+        right_percent_off = right_off[right_off > 0].size / right_off.size - 0.26
+
+        self.percent_off.appendleft((left_percent_off, right_percent_off))
+
+        print(f"{self.frames_recvd} -> {(left_percent_off, right_percent_off)}")
 
         # if self.frames_recvd % 50 == 0:
         #     print("Saving...")
         #     np.save(f".stuff/on_path_{self.frames_recvd}", on_path)
 
         if self.debug:
-            self.rvh.add_frame(np.hstack(list(self.frame_buffer[0])), "first_pass")
-            self.rvh.add_frame(np.hstack(list(self.hpf_history[0])), "first_pass")
-            self.rvh.add_frame(np.hstack(list(on_rect)), "first_pass")
-            self.rvh.add_frame(
-                np.hstack(list(self.on_rect_history[self.DELAY_FRAME - 1])),
-                "first_pass",
-            )
-            self.rvh.add_frame(np.hstack(list(off_rect)), "first_pass")
-            self.rvh.add_frame(
-                np.hstack(list(self.off_rect_history[self.DELAY_FRAME - 1])),
-                "first_pass",
-            )
+            self.rvh.add_frame(np.hstack([left, right]), "raw")
+            self.rvh.add_frame(np.hstack([left_off, right_off]), "raw")
+            self.rvh.commit_frame(self.frames_recvd)
+            pass
 
-            on_path = 255 * (on_path / on_path.max())
-            off_path = 255 * (off_path / off_path.max())
-
-            self.rvh.add_frame(
-                np.hstack(
-                    [
-                        off_path[0, :, :, PathwayIndices.HORIZ_LR.value],
-                        on_path[0, :, :, PathwayIndices.HORIZ_LR.value],
-                        off_path[1, :, :, PathwayIndices.HORIZ_LR.value],
-                        on_path[1, :, :, PathwayIndices.HORIZ_LR.value],
-                    ]
-                ),
-                "directional_pathways",
-            )
-            self.rvh.add_frame(
-                np.hstack(
-                    [
-                        off_path[0, :, :, PathwayIndices.HORIZ_RL.value],
-                        on_path[0, :, :, PathwayIndices.HORIZ_RL.value],
-                        off_path[1, :, :, PathwayIndices.HORIZ_RL.value],
-                        on_path[1, :, :, PathwayIndices.HORIZ_RL.value],
-                    ]
-                ),
-                "directional_pathways",
-            )
-            self.rvh.add_frame(
-                np.hstack(
-                    [
-                        off_path[0, :, :, PathwayIndices.VERT_UD.value],
-                        on_path[0, :, :, PathwayIndices.VERT_UD.value],
-                        off_path[1, :, :, PathwayIndices.VERT_UD.value],
-                        on_path[1, :, :, PathwayIndices.VERT_UD.value],
-                    ]
-                ),
-                "directional_pathways",
-            )
-            self.rvh.add_frame(
-                np.hstack(
-                    [
-                        off_path[0, :, :, PathwayIndices.VERT_DU.value],
-                        on_path[0, :, :, PathwayIndices.VERT_DU.value],
-                        off_path[1, :, :, PathwayIndices.VERT_DU.value],
-                        on_path[1, :, :, PathwayIndices.VERT_DU.value],
-                    ]
-                ),
-                "directional_pathways",
-            )
-
-            self.rvh.commit_frame()
-
-        return combined
+        return 0
         # else:
         #     pass # maybe log
 
