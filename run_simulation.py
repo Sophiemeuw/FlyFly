@@ -8,6 +8,8 @@ from cobar_miniproject import levels
 from cobar_miniproject.cobar_fly import CobarFly
 from flygym import Camera, SingleFlySimulation
 from flygym.arena import FlatTerrain
+from submission import Controller
+import numpy as np
 
 
 def run_simulation(
@@ -18,10 +20,12 @@ def run_simulation(
     max_steps,
     output_dir="outputs",
     progress=True,
+    suppress_motion=False,
+    pickle=""
 ):
-    sys.path.append(str(submission_dir.parent))
-    module = importlib.import_module(submission_dir.name)
-    controller = module.controller.Controller()
+    # sys.path.append(str(submission_dir.parent))
+    # module = importlib.import_module(submission_dir.name)
+    controller = Controller()
     timestep = 1e-4
 
     fly = CobarFly(
@@ -66,9 +70,11 @@ def run_simulation(
     else:
         step_range = range(max_steps)
 
+    t = []
+    pending_avg = False
     for i in step_range:
         # Get observations
-        obs, reward, terminated, truncated, info = sim.step(controller.get_actions(obs))
+        obs, reward, terminated, truncated, info = sim.step(controller.get_actions(obs, suppress_motion=suppress_motion))
         sim.render()
         if controller.done_level(obs):
             # finish the path integration level
@@ -80,6 +86,8 @@ def run_simulation(
                 del obs_["vision"]
             if "raw_vision" in obs_:
                 del obs_["raw_vision"]
+        else: 
+            t.append(i)
         if "raw_vision" in info:
             del info["raw_vision"]
         obs_hist.append(obs_)
@@ -96,6 +104,30 @@ def run_simulation(
     save_path = Path(output_dir) / f"level{level}_seed{seed}.mp4"
     save_path.parent.mkdir(parents=True, exist_ok=True)
     cam.save_video(save_path, stabilization_time=0)
+
+
+    pickle_save_path = pickle
+    if pickle_save_path:
+        import os
+        import pickle
+        print(f"Pickling...")
+
+        video_frames = {
+            "t": t,
+            "raw_vision": [
+                hist_entry["raw_vision"]
+                for hist_entry in obs_hist
+                if "raw_vision" in hist_entry
+            ],
+            "vision": [
+                hist_entry["vision"]
+                for hist_entry in obs_hist
+                if "vision" in hist_entry
+            ],
+        }
+        with open(f"{pickle_save_path}.pkl", "wb") as f:
+            pickle.dump(video_frames, f)
+
 
 
 if __name__ == "__main__":
@@ -140,6 +172,16 @@ if __name__ == "__main__":
         action="store_true",
         help="Show progress bar during simulation.",
     )
+    parser.add_argument(
+        "--suppress-motion", 
+        action="store_true"
+    )
+
+    parser.add_argument(
+        "--pickle",
+        help="save images from observations in a pickle with this path."
+    )
+
     args = parser.parse_args()
 
     run_simulation(
@@ -150,4 +192,6 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         max_steps=args.max_steps,
         progress=args.progress,
+        suppress_motion=args.suppress_motion,
+        pickle=args.pickle
     )
