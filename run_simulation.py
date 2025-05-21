@@ -95,6 +95,7 @@ def run_simulation(
 
         if hasattr(controller, "quit") and controller.quit:
             print("Simulation terminated by user.")
+            clean_quit = True
             break
         if hasattr(level_arena, "quit") and level_arena.quit:
             print("Target reached. Simulation terminated.")
