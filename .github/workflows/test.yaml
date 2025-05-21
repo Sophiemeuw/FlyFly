@@ -1,7 +1,14 @@
 name: Run Simulations
 
 on:
-  workflow_dispatch:
+  push:
+    paths:
+      - 'submission/**'
+      - '.github/workflows/test.yaml'
+  pull_request:
+    paths:
+      - 'submission/**'
+      - '.github/workflows/test.yaml'
 
 jobs:
   run-simulations:
@@ -9,6 +16,7 @@ jobs:
     strategy:
       matrix:
         level: [0, 1, 2, 3, 4]
+        seed: [43, 32, 51]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -35,12 +43,10 @@ jobs:
           PYOPENGL_PLATFORM: egl
         run: |
           source .venv/bin/activate
-          for seed in 43 32 51; do
-            python3 run_simulation.py --level=${{ matrix.level }} --seed=$seed --progress submission/
-          done
+          python3 run_simulation.py --level=${{ matrix.level }} --seed=${{ matrix.seed }} --progress submission/
 
       - name: Upload simulation outputs
         uses: actions/upload-artifact@v4
         with:
-          name: simulation-outputs-level-${{ matrix.level }}
+          name: simulation-outputs-level-${{ matrix.level }}-seed-${{ matrix.seed }}
           path: outputs/
