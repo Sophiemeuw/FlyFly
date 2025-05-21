@@ -3,8 +3,8 @@ import random
 from cobar_miniproject.base_controller import Action, BaseController, Observation
 from .utils import get_cpg, step_cpg
 from typing import NamedTuple
-import itertools
 import numpy as np 
+from .looming_detector import LoomDetector
 
 
 
@@ -46,6 +46,9 @@ class Controller(BaseController):
         self.homing_done = False
         
         self.min_home = 100
+
+        self.loom_detector = LoomDetector(debug=True)
+        self.ball_escape_timer = 0
 
     def get_integrated_position(self) -> np.ndarray:
         return self.integrated_position.copy()
@@ -184,34 +187,25 @@ class Controller(BaseController):
 
     def ball_avoidance(self, obs: Observation) -> CommandWithImportance:
         # Process current vision
-        left_eye, right_eye = self.process_vision(obs["vision"])
-        
-        if self.prev_vision_data is None:
-            self.prev_vision_data = (left_eye, right_eye)
-            return CommandWithImportance(0, 0, 0)
-        
-        prev_left, prev_right = self.prev_vision_data
-        
-        # Detect motion using temporal difference
-        left_motion = np.mean(np.abs(left_eye - prev_left)) > self.motion_threshold
-        right_motion = np.mean(np.abs(right_eye - prev_right)) > self.motion_threshold
-        
-        # Store current vision for next frame
-        self.prev_vision_data = (left_eye, right_eye)
-        
-        # Generate avoidance command
-        if left_motion or right_motion:
-            if left_motion > right_motion:
-                return CommandWithImportance(0.2, 1.0, 1.0)  # Turn right
-            else:
-                return CommandWithImportance(1.0, 0.2, 1.0)  # Turn left
-                
-        return CommandWithImportance(0, 0, 0)
+        detected = self.loom_detector.process(obs)
+        if detected: 
+            # reset ball escape timer 
+            print(f"Triggered escape")
+            self.ball_escape_timer = 1500
 
-    def get_actions(self, obs: Observation) -> Action:
+        if self.ball_escape_timer > 0 and self.ball_escape_timer % 500 == 0:
+            print(f"Escaping... {self.ball_escape_timer}/1500")
+        
+        if self.ball_escape_timer > 0:
+            self.ball_escape_timer -= 1
+            return CommandWithImportance(1, 1, 1)
+        else: 
+            return CommandWithImportance(0, 0, 0)
+
+    def get_actions(self, obs: Observation, suppress_motion=False) -> Action:
         # End the level if done_level is True
         if self.done_level(obs):
-            joint_angles = obs["joints"] if "joints" in obs else np.zeros_like(self.preprogrammed_steps.default_joint_angles)
+            joint_angles = obs["joints"][0] if "joints" in obs else self.preprogrammed_steps.default_pose
             adhesion = np.ones(6)
             return {
                 "joints": joint_angles,
@@ -223,6 +217,8 @@ class Controller(BaseController):
         # Update heading and position from observation
         self.heading = obs["heading"].copy()
         self.path_integration(obs)
+
+        ball_cmd = self.ball_avoidance(obs)
 
         # Check if odor source is reached
         odor_intensity = np.mean(obs["odor_intensity"])
