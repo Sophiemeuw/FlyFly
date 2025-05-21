@@ -380,8 +380,8 @@ class LoomDetector:
     def process(self, obs) -> float:
         if not obs["vision_updated"]:
             return None
-        
-        images = obs["vision"]
+                
+        images = obs["vision"].copy()
         self.frames_recvd += 1
 
         images[:, :, 0] = (
