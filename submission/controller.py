@@ -15,6 +15,9 @@ class CommandWithImportance(NamedTuple):
     right_descending_signal: float
     importance: float  # 0->1
 
+    def get_drive(self):
+        return np.array([self.left_descending_signal, self.right_descending_signal])
+
 
 class Controller(BaseController):
     def __init__(self, timestep=1e-4, seed=0):
@@ -198,42 +201,20 @@ class Controller(BaseController):
         
         if self.ball_escape_timer > 0:
             self.ball_escape_timer -= 1
-            return CommandWithImportance(1, 1, 1)
+            return CommandWithImportance(1, 1, 0)
         else: 
             return CommandWithImportance(0, 0, 0)
+        
 
-    def get_actions(self, obs: Observation, suppress_motion=False) -> Action:
-        self.time += self.timestep        
-
-        # Update heading and position from observation
-        self.heading = obs["heading"].copy()
-        self.path_integration(obs)
-
-        ball_cmd = self.ball_avoidance(obs)
-
-        # Check if odor source is reached
-        odor_intensity = np.mean(obs["odor_intensity"])
-        if not self.reached_target and odor_intensity > self.odor_threshold:
-            self.reached_target = True
-            self.turning = True
-            self.turning_steps = 0
-
-        # Stop and turn 180° at odor source
+    def return_to_home(self) -> np.ndarray:
+         # Stop and turn 180° at odor source
         if self.reached_target and self.turning and self.turning_steps < self.max_turning_steps:
+            # Turn in place
             self.turning_steps += 1
-            # Turn in place: left=0, right=1 (or vice versa)
-            joint_angles, adhesion = step_cpg(
-                cpg_network=self.cpg_network,
-                preprogrammed_steps=self.preprogrammed_steps,
-                action=np.array([0.0, 1.0])
-            )
             if self.turning_steps >= self.max_turning_steps:
                 self.turning = False
                 self.go_home = True
-            return {
-                "joints": joint_angles,
-                "adhesion": adhesion,
-            }
+            return np.array([0.0, 1.0])
 
         # Homing: go back to initial position
         if self.go_home and not self.homing_done:
@@ -245,8 +226,6 @@ class Controller(BaseController):
                 # End the simulation when the fly returns to the drop position after reaching the odor source
                 self.homing_done = True
                 self.quit = True
-                joint_angles = obs["joints"] if "joints" in obs else np.zeros_like(self.preprogrammed_steps.default_joint_angles)
-                adhesion = np.ones(6)
                 print("Homing done, quitting simulation.")
 
             # Compute desired heading
@@ -260,27 +239,46 @@ class Controller(BaseController):
             else:
                 # Move forward
                 action = np.array([1.0, 1.0])
-            joint_angles, adhesion = step_cpg(
-                cpg_network=self.cpg_network,
-                preprogrammed_steps=self.preprogrammed_steps,
-                action=action,
-            )
-            return {
-                "joints": joint_angles,
-                "adhesion": adhesion,
-            }
+            
+            return action
+        
+    def decider(self, normal_pathway: CommandWithImportance, ball_avoid: CommandWithImportance) -> np.ndarray:
+        normal_importance, ball_importance = normal_pathway.importance, ball_avoid.importance
 
-        # Normal behavior (odor taxis + pillar avoidance)
-        odor_taxis_command = self.get_odor_taxis(obs)
-        combined_command = self.pillar_avoidance(obs, odor_taxis_command)
-        action = np.array([
-            combined_command.left_descending_signal,
-            combined_command.right_descending_signal,
-        ])
+        if normal_importance > ball_importance: 
+            drive = normal_pathway.get_drive()
+        else:
+            drive = ball_avoid.get_drive()
+        
+        return drive
+    
+    def get_actions(self, obs: Observation, suppress_motion=False) -> Action:
+        self.time += self.timestep        
+
+        # Update heading and position from observation
+        self.heading = obs["heading"].copy()
+        self.path_integration(obs)
+
+        # Check if odor source is reached
+        odor_intensity = np.mean(obs["odor_intensity"])
+        if not self.reached_target and odor_intensity > self.odor_threshold:
+            self.reached_target = True
+            self.turning = True
+            self.turning_steps = 0
+        
+        if not self.reached_target: 
+            ball_cmd = self.ball_avoidance(obs)
+            odor_taxis_command = self.get_odor_taxis(obs)
+            combined_command = self.pillar_avoidance(obs, odor_taxis_command)
+
+            drive = self.decider(combined_command, ball_cmd)
+        else:
+            drive = self.return_to_home()        
+
         joint_angles, adhesion = step_cpg(
             cpg_network=self.cpg_network,
             preprogrammed_steps=self.preprogrammed_steps,
-            action=action,
+            action=drive,
         )
         return {
             "joints": joint_angles,
