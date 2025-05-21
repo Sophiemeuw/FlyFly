@@ -1,5 +1,5 @@
 #!/bin/bash
-set -x
+set -xe
 
 seeds=(43 32 51)
 levels=(0 1 2 3 4)
