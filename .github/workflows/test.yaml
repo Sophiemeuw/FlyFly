@@ -32,12 +32,16 @@ jobs:
           pip install -r submission/requirements.txt
 
       - name: Run simulations for level ${{ matrix.level }}
+        env:
+          MUJOCO_GL: egl
+          PYOPENGL_PLATFORM: egl
         run: |
           for seed in 43 32 51; do
             python3 run_simulation.py --level=${{ matrix.level }} --seed=$seed submission/
           done
+
       - name: Upload simulation outputs
         uses: actions/upload-artifact@v4
         with:
-            name: simulation-outputs-level-${{ matrix.level }}
-            path: outputs/
+          name: simulation-outputs-level-${{ matrix.level }}
+          path: outputs/
