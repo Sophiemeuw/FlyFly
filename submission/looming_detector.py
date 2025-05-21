@@ -5,11 +5,10 @@ from enum import IntEnum
 import scipy.signal
 from pathlib import Path
 import imageio
-from copy import deepcopy
 from flygym.vision import Retina
-from PIL import Image
 import numba as nb
 import cv2
+import os
 
 
 class RawVideoHandler:
@@ -150,6 +149,11 @@ class PathwayIndices(IntEnum):
     VERT_DU = 3
 
 
+class EyeSide(IntEnum):
+    LEFT_EYE = 0
+    RIGHT_EYE = 1
+
+
 @staticmethod
 @nb.njit(parallel=True, cache=True)
 def project_to_rect(id_map, image) -> np.ndarray:
@@ -181,7 +185,7 @@ def project_all_to_rect(id_map, images):
 
 
 class LoomDetector:
-    def __init__(self, input_size: tuple, debug=False):
+    def __init__(self, debug=False):
         self.DELAY_FRAME = 5
         TS = 0.01
         HPF_TAU = 0.01
@@ -200,7 +204,7 @@ class LoomDetector:
             BUF_SIZE,
         )
 
-        self.percent_off = deque([(0.0, 0.0) for _ in range(BUF_SIZE)], BUF_SIZE)
+        self.percent_off_buf = deque([(0.0, 0.0) for _ in range(BUF_SIZE)], BUF_SIZE)
 
         self.hpf_b, self.hpf_a = scipy.signal.butter(
             1, HPF_CORNER, "high", output="ba", fs=1 / TS
@@ -373,7 +377,11 @@ class LoomDetector:
 
         return on_path, off_path
 
-    def process(self, images: np.ndarray) -> float:
+    def process(self, obs) -> float:
+        if not obs["vision_updated"]:
+            return None
+        
+        images = obs["vision"]
         self.frames_recvd += 1
 
         images[:, :, 0] = (
@@ -396,7 +404,7 @@ class LoomDetector:
 
         left, right = images[0, :, :], images[1, :, :]
 
-        off = self.edge_rectification(images, 30, RectificationType.OFF)
+        off = self.edge_rectification(images, 50, RectificationType.OFF)
         left_off, right_off = off[0, :, :], off[1, :, :]
 
         left_percent_off = (
@@ -404,9 +412,21 @@ class LoomDetector:
         )  # remove the outside mask
         right_percent_off = right_off[right_off > 0].size / right_off.size - 0.26
 
-        self.percent_off.appendleft((left_percent_off, right_percent_off))
+        self.percent_off_buf.appendleft((left_percent_off, right_percent_off))
 
-        print(f"{self.frames_recvd} -> {(left_percent_off, right_percent_off)}")
+        percent_off_arr = np.stack(
+            [
+                np.array([percent_off[0] for percent_off in self.percent_off_buf]),
+                np.array([percent_off[1] for percent_off in self.percent_off_buf]),
+            ]
+        )
+
+        delta_percent_off = -np.diff(percent_off_arr, axis=1)
+
+        for side in range(2):
+            if np.all(delta_percent_off[side, 0:3] > 0.005):
+                print(f"{self.frames_recvd}: Probable looming from {EyeSide(side)}!!")
+                return True
 
         # if self.frames_recvd % 50 == 0:
         #     print("Saving...")
@@ -541,7 +561,7 @@ if __name__ == "__main__":
             print("Loaded existing data")
         else:
             print("Generating new data")
-            ld = LoomDetector((2, 721, 2), debug=True)
+            ld = LoomDetector(debug=True)
             views = generate_visual_pattern(ld, pattern, scan_frames, num_scans)
             views = [view[1] for view in views]
 
@@ -555,7 +575,7 @@ if __name__ == "__main__":
             data = pickle.load(f)
         views = data["vision"]
 
-    ld = LoomDetector((2, 721, 2), debug=True)
+    ld = LoomDetector(debug=True)
 
     length = len(views)
     i = 1
@@ -563,4 +583,8 @@ if __name__ == "__main__":
         for fly_view in views:
             print(f"{i}/{length}")
             i += 1
-            ld.process(fly_view)
+            obs = {
+                "vision": fly_view,
+                "vision_updated": True
+            }
+            ld.process(obs)
