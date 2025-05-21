@@ -203,15 +203,6 @@ class Controller(BaseController):
             return CommandWithImportance(0, 0, 0)
 
     def get_actions(self, obs: Observation, suppress_motion=False) -> Action:
-        # End the level if done_level is True
-        if self.done_level(obs):
-            joint_angles = obs["joints"][0] if "joints" in obs else self.preprogrammed_steps.default_pose
-            adhesion = np.ones(6)
-            return {
-                "joints": joint_angles,
-                "adhesion": adhesion,
-            }
-
         self.time += self.timestep        
 
         # Update heading and position from observation
