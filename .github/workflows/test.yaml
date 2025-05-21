@@ -1,14 +1,7 @@
 name: Run Simulations
 
 on:
-  push:
-    paths:
-      - 'submission/**'
-      - '.github/workflows/test.yaml'
-  pull_request:
-    paths:
-      - 'submission/**'
-      - '.github/workflows/test.yaml'
+  workflow_dispatch:
 
 jobs:
   run-simulations:
@@ -31,7 +24,6 @@ jobs:
           source .venv/bin/activate
           uv pip install -r submission/requirements.txt
 
-
       - name: Install dependencies
         run: |
           sudo apt update
@@ -44,7 +36,7 @@ jobs:
         run: |
           source .venv/bin/activate
           for seed in 43 32 51; do
-            python3 run_simulation.py --level=${{ matrix.level }} --seed=$seed submission/
+            python3 run_simulation.py --level=${{ matrix.level }} --seed=$seed --progress submission/
           done
 
       - name: Upload simulation outputs
