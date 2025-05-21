@@ -78,6 +78,7 @@ def run_simulation(
         sim.render()
         if controller.done_level(obs):
             # finish the path integration level
+            clean_quit = True
             break
             
         obs_ = obs.copy()
