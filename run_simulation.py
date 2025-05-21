@@ -71,7 +71,7 @@ def run_simulation(
         step_range = range(max_steps)
 
     t = []
-    pending_avg = False
+    clean_quit = False
     for i in step_range:
         # Get observations
         obs, reward, terminated, truncated, info = sim.step(controller.get_actions(obs, suppress_motion=suppress_motion))
@@ -98,6 +98,7 @@ def run_simulation(
             break
         if hasattr(level_arena, "quit") and level_arena.quit:
             print("Target reached. Simulation terminated.")
+            clean_quit = True
             break
 
     # Save video
@@ -127,6 +128,11 @@ def run_simulation(
         }
         with open(f"{pickle_save_path}.pkl", "wb") as f:
             pickle.dump(video_frames, f)
+
+    if clean_quit: 
+        exit(0)
+    else:
+        exit(1)
 
 
 
