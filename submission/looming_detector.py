@@ -508,6 +508,15 @@ if __name__ == "__main__":
     import os
     import argparse
 
+
+    class RenameUnpickler(pickle.Unpickler):
+        def find_class(self, module, name):
+            renamed_module = module
+            if module == "submission":
+                renamed_module = "."
+
+            return super(RenameUnpickler, self).find_class(renamed_module, name)
+
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -572,7 +581,7 @@ if __name__ == "__main__":
         if not os.path.exists(file_name):
             raise FileNotFoundError(f"File {file_name} does not exist.")
         with open(file_name, "rb") as f:
-            data = pickle.load(f)
+            data = RenameUnpickler(f).load()
         views = data["vision"]
 
     ld = LoomDetector(debug=True)
@@ -588,3 +597,4 @@ if __name__ == "__main__":
                 "vision_updated": True
             }
             ld.process(obs)
+
