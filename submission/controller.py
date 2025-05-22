@@ -138,7 +138,7 @@ class Controller(BaseController):
                 percent_negative = np.count_nonzero(differences < 1e-7)/len(self.odor_history)
                 if percent_negative > 0.6 or np.any(np.abs(self.integrated_position) > 35):
                     print("Going too far, triggering random turn")
-                    self.odor_turn_timer = 500
+                    self.odor_turn_timer = 1500
                     self.odor_target_heading = obs["heading"] - np.pi
                     if self.odor_target_heading < -np.pi:
                         self.odor_target_heading = 2*np.pi + self.odor_target_heading
