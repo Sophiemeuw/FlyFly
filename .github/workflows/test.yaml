@@ -2,6 +2,15 @@ name: Run Simulations
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - 'submission/**'
+      - '.github/workflows/test.yaml'
+      - 'run_simulation.py'
+  pull_request:
+    paths:
+      - 'submission/**'
+      - '.github/workflows/test.yaml'
 
 jobs:
   run-simulations:

@@ -23,6 +23,12 @@ class EscapeDirection(IntEnum):
     LEFT = -1
     RIGHT = 1
 
+class ControllerState(IntEnum):
+    SEEKING_ODOR = 0
+    TURNING = 1
+    RETURNING_HOME = 2
+
+    
 
 class Controller(BaseController):
     def __init__(self, timestep=1e-4, seed=0):
@@ -43,18 +49,20 @@ class Controller(BaseController):
         self.TURN_DURATION = 400
 
         # Path integration variables
+        self.POS_HIST_LEN = 5000
+
         self.heading = 0.0
         self.integrated_position = np.zeros(2)
-        self.POS_HIST_LEN = 5000
         self.integrated_position_history = deque([], self.POS_HIST_LEN)
         self.pos_inhibit_cooldown = 0
-        self.reached_target = False
-        self.go_home = False
-        self.odor_threshold = 0.2  # Set as appropriate for your environment
+       
+
+        self.controller_state = ControllerState.SEEKING_ODOR
+
+        self.odor_threshold = 0.2 
         self.turning = False
         self.turning_steps = 0
         self.max_turning_steps = 100  # Number of steps to turn 180°
-        self.homing_done = False
         
         self.min_home = 100
 
@@ -194,8 +202,9 @@ class Controller(BaseController):
         return CommandWithImportance(left_descending_signal, right_descending_signal, IMPORTANCE)
 
     def path_integration(self, obs: Observation): 
-        heading = obs["heading"].copy()
+        heading = self.heading
         vel = obs["velocity"].copy()
+
         heading = -heading
 
         self.integrated_position_history.appendleft(self.integrated_position.copy())
@@ -212,41 +221,48 @@ class Controller(BaseController):
 
         
     def return_to_home(self) -> np.ndarray:
-         # Stop and turn 180° at odor source
-        if self.reached_target and self.turning and self.turning_steps < self.max_turning_steps:
-            # Turn in place
-            self.turning_steps += 1
-            if self.turning_steps >= self.max_turning_steps:
-                self.turning = False
-                self.go_home = True
-            return np.array([0.0, 1.0])
+        match self.controller_state:
+            case ControllerState.SEEKING_ODOR:
+                # if we're in this, we need to change state to turning as soon as we enter. 
+                print("Unexpected state in return to home, should not be here")
+                self.controller_state = ControllerState.TURNING
+            case ControllerState.TURNING:
+                # Stop and turn 180° at odor source
+                if self.turning_steps < self.max_turning_steps:
+                    # Turn in place
+                    self.turning_steps += 1
+                else:
+                    self.controller_state = ControllerState.RETURNING_HOME
 
-        # Homing: go back to initial position
-        if self.go_home and not self.homing_done:
-            # Compute vector to home
-            to_home =  -self.integrated_position
-            dist_to_home = np.linalg.norm(to_home)
+                return np.array([0.0, 1.0])                 
+            case ControllerState.RETURNING_HOME:
+                # Homing: go back to initial position
+                # Compute vector to home
+                to_home =  -self.integrated_position
+                dist_to_home = np.linalg.norm(to_home)
 
-            if dist_to_home < 4:  # Close enough, stop
-                # End the simulation when the fly returns to the drop position after reaching the odor source
-                self.homing_done = True
-                self.quit = True
-                print("Homing done, quitting simulation.")
+                if dist_to_home < 4:  # Close enough, stop
+                    # End the simulation when the fly returns to the drop position after reaching the odor source
+                    self.quit = True
+                    print("Homing done, quitting simulation.")
 
-            # Compute desired heading
-            desired_heading = np.arctan2(to_home[1], to_home[0])
-            heading_error = desired_heading - self.heading
-            heading_error = np.arctan2(np.sin(heading_error), np.cos(heading_error))
-            # Simple proportional controller for turning
-            if abs(heading_error) > 0.1:
-                # Turn towards home
-                action = np.array([0.0, 1.0]) if heading_error > 0 else np.array([1.0, 0.0])
-            else:
-                # Move forward
-                action = np.array([1.0, 1.0])
+                # Compute desired heading
+                desired_heading = np.arctan2(to_home[1], to_home[0])
+                heading_error = desired_heading - self.heading
+                heading_error = np.arctan2(np.sin(heading_error), np.cos(heading_error))
+                # Simple proportional controller for turning
+                if abs(heading_error) > 0.1:
+                    # Turn towards home
+                    action = np.array([0.0, 1.0]) if heading_error > 0 else np.array([1.0, 0.0])
+                else:
+                    # Move forward
+                    action = np.array([1.0, 1.0])
+                
+                return action
+            case _:
+                raise RuntimeError(f"Invalid ControllerState {self.controller_state}")
             
-            return action
-        
+                
 
     def get_actions(self, obs: Observation) -> Action:
         self.time += self.timestep        
@@ -257,19 +273,17 @@ class Controller(BaseController):
 
         # Check if odor source is reached
         odor_intensity = np.mean(obs["odor_intensity"])
-        if not self.reached_target and odor_intensity > self.odor_threshold:
-            self.reached_target = True
-            self.turning = True
-            self.turning_steps = 0
-        
-        if not self.reached_target: 
+        if odor_intensity > self.odor_threshold:
+            self.controller_state = ControllerState.TURNING
+            
+        if self.controller_state == ControllerState.SEEKING_ODOR: 
             odor_taxis_command = self.get_odor_taxis(obs)
             combined_command = self.pillar_avoidance(obs, odor_taxis_command)
 
             drive = combined_command.get_drive()
         else:
-            drive = self.return_to_home()        
-
+            drive = self.return_to_home()       
+        
         joint_angles, adhesion = step_cpg(
             cpg_network=self.cpg_network,
             preprogrammed_steps=self.preprogrammed_steps,
@@ -281,7 +295,7 @@ class Controller(BaseController):
         }
 
     def done_level(self, obs: Observation):
-        return self.quit or self.homing_done
+        return self.quit
 
     def reset(self, **kwargs):
         """Clean reset of all state"""
