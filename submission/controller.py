@@ -92,9 +92,9 @@ class Controller(BaseController):
                     self.odor_turn_timer -= 1
                 magnitude = np.clip(diff, 0.2, 1)
                 if diff < 0: 
-                    return CommandWithImportance(-0.2, magnitude, 2)
+                    return CommandWithImportance(0, magnitude, 2)
                 else:
-                    return CommandWithImportance(magnitude, -0.2, 2)
+                    return CommandWithImportance(magnitude, 0, 2)
             else: 
                 if self.odor_turn_timer == 499:
                     print("straight...")
