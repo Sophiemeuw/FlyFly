@@ -92,14 +92,14 @@ class Controller(BaseController):
                     self.odor_turn_timer -= 1
                 magnitude = np.clip(diff, 0.2, 1)
                 if diff < 0: 
-                    return CommandWithImportance(-0.2, magnitude, 0.8)
+                    return CommandWithImportance(-0.2, magnitude, 2)
                 else:
-                    return CommandWithImportance(magnitude, -0.2, 0.8)
+                    return CommandWithImportance(magnitude, -0.2, 2)
             else: 
                 if self.odor_turn_timer == 499:
                     print("straight...")
                 self.odor_turn_timer -= 1
-                return CommandWithImportance(0.5, 0.5, 0.8)
+                return CommandWithImportance(0.5, 0.5, 2)
 
 
         velocity = obs["velocity"]
@@ -201,6 +201,7 @@ class Controller(BaseController):
 
         # Trigger escape if strong force and not moving
         if force_mag > 0.3 and velocity_mag < 0.4:
+            print("touch recoil")
             self.escape_timer = self.ESCAPE_DURATION
             # Direction to escape: +1 = left leg more contact → escape right
             #                     -1 = right leg more contact → escape left
@@ -236,6 +237,7 @@ class Controller(BaseController):
             or left_side_brightness < 3
             or right_side_brightness < 3
         ) and velocity_mag < 0.2:
+            print("visual emergency")
             if left_side_brightness < right_side_brightness:
                 left_signal = 0.1
                 right_signal = 1.0
@@ -256,6 +258,9 @@ class Controller(BaseController):
             )
         
 
+        if odor_taxis_command.importance > 1:
+            # we have a really important odor taxis command, so really reduce the importance of visual avoidance signals
+            IMPORTANCE = 0.1
         
         # Regular vision-based turning
         diff = left_weighted - right_weighted
