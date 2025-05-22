@@ -71,17 +71,19 @@ class Controller(BaseController):
     def get_last_drive(self) -> np.ndarray:
         return self.last_drive.copy()
 
-    def get_odor_taxis(self, obs: Observation, velocity: np.ndarray) -> CommandWithImportance:
+    def get_odor_taxis(self, obs: Observation) -> CommandWithImportance:
         ODOR_GAIN = -600
         DELTA_MIN = 0.2
         DELTA_MAX = 0.8
         BASE_IMPORTANCE = 0.4
         MAX_IMPORTANCE = 0.9
 
+        velocity = obs["velocity"]
+
         I_right = (obs["odor_intensity"][0][1] + obs["odor_intensity"][0][3]) / 2
         I_left = (obs["odor_intensity"][0][0] + obs["odor_intensity"][0][2]) / 2
         I_total = I_left + I_right
-        I_norm = min(I_total / 0.0015, 1.0)
+        I_norm = min(I_total / 0.0025, 1.0)
         importance = BASE_IMPORTANCE + (MAX_IMPORTANCE - BASE_IMPORTANCE) * I_norm
 
         asymmetry = (I_left - I_right) / ((I_left + I_right + 1e-6) / 2)
@@ -314,7 +316,7 @@ class Controller(BaseController):
             self.controller_state = ControllerState.TURNING
             
         if self.controller_state == ControllerState.SEEKING_ODOR:
-            odor_taxis_command = self.get_odor_taxis(obs, obs["velocity"])
+            odor_taxis_command = self.get_odor_taxis(obs)
             combined_command = self.pillar_avoidance(obs, odor_taxis_command)
             drive = combined_command.get_drive()
         else:
