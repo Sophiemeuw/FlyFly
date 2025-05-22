@@ -284,15 +284,23 @@ class Controller(BaseController):
                 return action
             case _:
                 raise RuntimeError(f"Invalid ControllerState {self.controller_state}")
-    
+
     # Prevent huge changes to the drive
     def temper_drive(self, drive: np.ndarray) -> np.ndarray:
-        MAX_SLEW_RATE = 0.05
-        delta = drive - self.last_drive
-        delta = np.sign(delta) * np.clip(np.abs(delta), 0, MAX_SLEW_RATE)
+        MAX_SLEW_RATE = 0.2 # normally be liberal with the slew rate
 
+        # but if we're really pushing it hard and changing signs, then be more conservative.
+        if np.any(np.sign(drive) != np.sign(self.last_drive)):
+            MAX_SLEW_RATE = 0.05
+
+        delta = drive - self.last_drive
+
+        signs = np.sign(delta)
+        signs[signs == 0] = 1
+
+        delta = signs * np.clip(np.abs(delta), 0, MAX_SLEW_RATE)
         return self.last_drive + delta
-                 
+
     def get_actions(self, obs: Observation) -> Action:
         self.time += self.timestep
 
