@@ -95,14 +95,22 @@ class Controller(BaseController):
             left_descending_signal = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * turning_bias
             right_descending_signal = DELTA_MAX
 
-        # Damping based on velocity
+        # Damping based on velocity, only apply when odor is strong
         velocity_mag = np.linalg.norm(velocity[:2])
         VELOCITY_THRESHOLD = 0.4
         MAX_DAMPING = 0.5
-        damping_factor = 1.0 - min(velocity_mag / VELOCITY_THRESHOLD, 1.0) * MAX_DAMPING
+
+        if I_total > 0.0005:  # only damp near odor
+            damping_factor = 1.0 - min(velocity_mag / VELOCITY_THRESHOLD, 1.0) * MAX_DAMPING
+        else:
+            damping_factor = 1.0
 
         left_descending_signal *= damping_factor
         right_descending_signal *= damping_factor
+
+        # Clamp minimum signal to avoid total shutdown
+        left_descending_signal = max(left_descending_signal, 0.1)
+        right_descending_signal = max(right_descending_signal, 0.1)
 
         return CommandWithImportance(left_descending_signal, right_descending_signal, importance)
 
@@ -300,16 +308,19 @@ class Controller(BaseController):
         self.heading = obs["heading"].copy()
         self.path_integration(obs)
 
-        # Check if odor source is reached
         odor_intensity = np.mean(obs["odor_intensity"])
 
-        if odor_intensity > 0.2:
+        # Switch to turning state only if we're in SEEKING_ODOR and really detect odor
+        if self.controller_state == ControllerState.SEEKING_ODOR and odor_intensity > 0.2:
             self.controller_state = ControllerState.TURNING
+
+        # (Optional) switch back if we lose odor completely
+        elif self.controller_state == ControllerState.TURNING and odor_intensity < 0.05:
+            self.controller_state = ControllerState.SEEKING_ODOR
+
         if self.controller_state == ControllerState.SEEKING_ODOR:
             odor_taxis_command = self.get_odor_taxis(obs, obs["velocity"])
-
             combined_command = self.pillar_avoidance(obs, odor_taxis_command)
-
             drive = combined_command.get_drive()
         else:
             drive = self.return_to_home()
