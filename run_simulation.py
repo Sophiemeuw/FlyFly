@@ -71,6 +71,7 @@ def run_simulation(
 
     t = []
     clean_quit = False
+    flip_itr = 0
     for i in step_range:
         # Get observations
         obs, reward, terminated, truncated, info = sim.step(controller.get_actions(obs))
@@ -94,7 +95,12 @@ def run_simulation(
         info_hist.append(info)
 
         if info["flip"]: 
-            print("Flip detected, quitting early...")
+            flip_itr += 1
+        else:
+            flip_itr = 0
+
+        if flip_itr > 500:
+            #return early
             break
 
         if hasattr(controller, "quit") and controller.quit:
