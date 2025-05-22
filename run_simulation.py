@@ -93,6 +93,10 @@ def run_simulation(
             del info["raw_vision"]
         obs_hist.append(obs_)
         info_hist.append(info)
+        
+
+        if i % 1000 == 0 and debug:
+            print(f"{np.linalg.norm(obs["debug_fly"][0][0:2] - level_arena.target_position)}")
 
         if info["flip"]: 
             flip_itr += 1
