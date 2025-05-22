@@ -4,6 +4,7 @@ from scipy.interpolate import CubicSpline
 
 from flygym.util import get_data_path
 
+
 # This class was adapted with modifications from flygym/examples/locomotion/steps.py. Thank you!
 class PreprogrammedSteps:
     """Preprogrammed steps by each leg extracted from experimental

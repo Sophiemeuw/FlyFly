@@ -2,6 +2,7 @@ import numpy as np
 import shelve
 from datetime import datetime
 
+
 def get_cpg(timestep, seed=0):
     from flygym.examples.locomotion import CPGNetwork
 
@@ -52,7 +53,7 @@ def step_cpg(cpg_network, preprogrammed_steps, action):
             leg,
             cpg_network.curr_phases[i],
             cpg_network.curr_magnitudes[i],
-            reverse=reverse
+            reverse=reverse,
         )
         joints_angles.append(my_joints_angles)
 
