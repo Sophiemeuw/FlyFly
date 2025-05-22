@@ -71,7 +71,7 @@ class Controller(BaseController):
     def get_last_drive(self) -> np.ndarray:
         return self.last_drive.copy()
 
-    def get_odor_taxis(self, obs: Observation) -> CommandWithImportance:
+    def get_odor_taxis(self, obs: Observation, velocity: np.ndarray) -> CommandWithImportance:
         ODOR_GAIN = -600
         DELTA_MIN = 0.2
         DELTA_MAX = 0.8
@@ -95,9 +95,17 @@ class Controller(BaseController):
             left_descending_signal = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * turning_bias
             right_descending_signal = DELTA_MAX
 
-        return CommandWithImportance(
-            left_descending_signal, right_descending_signal, importance
-        )
+        # Damping based on velocity
+        velocity_mag = np.linalg.norm(velocity[:2])
+        VELOCITY_THRESHOLD = 0.4
+        MAX_DAMPING = 0.5
+        damping_factor = 1.0 - min(velocity_mag / VELOCITY_THRESHOLD, 1.0) * MAX_DAMPING
+
+        left_descending_signal *= damping_factor
+        right_descending_signal *= damping_factor
+
+        return CommandWithImportance(left_descending_signal, right_descending_signal, importance)
+
 
     def pillar_avoidance(
         self, obs: Observation, odor_taxis_command: CommandWithImportance
