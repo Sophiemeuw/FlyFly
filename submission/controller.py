@@ -64,7 +64,6 @@ class Controller(BaseController):
         self.max_turning_steps = 100  # Number of steps to turn 180°
 
         self.last_drive = np.zeros(2)
-        self.desired_drive = np.zeros(2)
 
     def get_integrated_position(self) -> np.ndarray:
         return self.integrated_position.copy()
@@ -135,7 +134,8 @@ class Controller(BaseController):
                 # start turn
                 self.turn_timer = self.TURN_DURATION
 
-            return CommandWithImportance(-0.5, -0.5, 1.0)
+            drive_strength = -np.clip((self.ESCAPE_DURATION - self.escape_timer)*(0.5/20) + 0.1, 0, 0.5)
+            return CommandWithImportance(drive_strength, drive_strength, 1.0)
 
         if self.turn_timer > 0:
             self.turn_timer -= 1
@@ -285,22 +285,6 @@ class Controller(BaseController):
             case _:
                 raise RuntimeError(f"Invalid ControllerState {self.controller_state}")
 
-    # Prevent huge changes to the drive
-    def temper_drive(self, drive: np.ndarray) -> np.ndarray:
-        MAX_SLEW_RATE = 0.2 # normally be liberal with the slew rate
-
-        # but if we're really pushing it hard and changing signs, then be more conservative.
-        if np.any(np.sign(drive) != np.sign(self.last_drive)):
-            MAX_SLEW_RATE = 0.05
-
-        delta = drive - self.last_drive
-
-        signs = np.sign(delta)
-        signs[signs == 0] = 1
-
-        delta = signs * np.clip(np.abs(delta), 0, MAX_SLEW_RATE)
-        return self.last_drive + delta
-
     def get_actions(self, obs: Observation) -> Action:
         self.time += self.timestep
 
@@ -321,7 +305,6 @@ class Controller(BaseController):
         else:
             drive = self.return_to_home()
 
-        drive = self.temper_drive(drive)
         self.last_drive = drive
 
         joint_angles, adhesion = step_cpg(
