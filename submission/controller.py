@@ -6,6 +6,7 @@ from typing import NamedTuple
 from collections import deque
 from enum import IntEnum
 
+
 class CommandWithImportance(NamedTuple):
     left_descending_signal: float
     right_descending_signal: float
@@ -13,15 +14,18 @@ class CommandWithImportance(NamedTuple):
 
     def get_drive(self):
         return np.array([self.left_descending_signal, self.right_descending_signal])
-    
+
+
 class EscapeDirection(IntEnum):
     LEFT = -1
     RIGHT = 1
+
 
 class ControllerState(IntEnum):
     SEEKING_ODOR = 0
     TURNING = 1
     RETURNING_HOME = 2
+
 
 class Controller(BaseController):
     def __init__(self, timestep=1e-4, seed=0):
@@ -48,15 +52,14 @@ class Controller(BaseController):
         self.integrated_position = np.zeros(2)
         self.integrated_position_history = deque([], self.POS_HIST_LEN)
         self.pos_inhibit_cooldown = 0
-       
 
         self.controller_state = ControllerState.SEEKING_ODOR
 
-        self.odor_threshold = 0.2 
+        self.odor_threshold = 0.2
         self.turning = False
         self.turning_steps = 0
         self.max_turning_steps = 100  # Number of steps to turn 180°
-        
+
         self.min_home = 100
 
         self.ball_escape_timer = 0
@@ -88,9 +91,13 @@ class Controller(BaseController):
             left_descending_signal = DELTA_MAX - (DELTA_MAX - DELTA_MIN) * turning_bias
             right_descending_signal = DELTA_MAX
 
-        return CommandWithImportance(left_descending_signal, right_descending_signal, importance)
+        return CommandWithImportance(
+            left_descending_signal, right_descending_signal, importance
+        )
 
-    def pillar_avoidance(self, obs: Observation, odor_taxis_command: CommandWithImportance) -> CommandWithImportance:
+    def pillar_avoidance(
+        self, obs: Observation, odor_taxis_command: CommandWithImportance
+    ) -> CommandWithImportance:
         MAX_DELTA = 0.8
         MIN_DELTA = 0.2
         IMPORTANCE = 0.9
@@ -119,7 +126,7 @@ class Controller(BaseController):
         if self.escape_timer > 0:
             self.escape_timer -= 1
             # Turn slightly away from the contact force vector
-            if self.escape_timer == 0: 
+            if self.escape_timer == 0:
                 # start turn
                 self.turn_timer = self.TURN_DURATION
 
@@ -138,22 +145,32 @@ class Controller(BaseController):
             # Direction to escape: +1 = left leg more contact → escape right
             #                     -1 = right leg more contact → escape left
             escape_vector = total_force
-            self.escape_direction = EscapeDirection(np.sign(escape_vector[0]))  # x-axis as directional hint
+            self.escape_direction = EscapeDirection(
+                np.sign(escape_vector[0])
+            )  # x-axis as directional hint
             return CommandWithImportance(-0.6, -0.6, 1.0)
-        
+
         if self.pos_inhibit_cooldown > 0:
             self.pos_inhibit_cooldown -= 1
 
         # Final fallback: if we've stayed in the same place for a long time then trigger an escape behaviour.
         # Has a cooldown to ensure the position history buffer has enough time to fully turnover.
-        if self.pos_inhibit_cooldown == 0 and self.escape_timer == 0 and len(self.integrated_position_history) == self.POS_HIST_LEN: 
-            distance = np.linalg.norm(self.integrated_position_history[-1] - self.integrated_position)
+        if (
+            self.pos_inhibit_cooldown == 0
+            and self.escape_timer == 0
+            and len(self.integrated_position_history) == self.POS_HIST_LEN
+        ):
+            distance = np.linalg.norm(
+                self.integrated_position_history[-1] - self.integrated_position
+            )
             if distance < 2:
-                print(f"Stayed in place for too long: distance {distance}, escaping... ")
+                print(
+                    f"Stayed in place for too long: distance {distance}, escaping... "
+                )
                 self.escape_timer = self.ESCAPE_DURATION
                 self.pos_inhibit_cooldown = self.POS_HIST_LEN + 1
 
-        # Visual emergency: 
+        # Visual emergency:
         if (
             front_overlap_brightness < 10
             or left_side_brightness < 3
@@ -166,12 +183,16 @@ class Controller(BaseController):
                 left_signal = 1.0
                 right_signal = 0.1
             else:
-                left_signal, right_signal = (1.0, 0.1) if random.random() < 0.5 else (0.1, 1.0)
+                left_signal, right_signal = (
+                    (1.0, 0.1) if random.random() < 0.5 else (0.1, 1.0)
+                )
 
             return CommandWithImportance(
-                IMPORTANCE * left_signal + (1 - IMPORTANCE) * odor_taxis_command.left_descending_signal,
-                IMPORTANCE * right_signal + (1 - IMPORTANCE) * odor_taxis_command.right_descending_signal,
-                IMPORTANCE
+                IMPORTANCE * left_signal
+                + (1 - IMPORTANCE) * odor_taxis_command.left_descending_signal,
+                IMPORTANCE * right_signal
+                + (1 - IMPORTANCE) * odor_taxis_command.right_descending_signal,
+                IMPORTANCE,
             )
 
         # Regular vision-based turning
@@ -186,15 +207,19 @@ class Controller(BaseController):
             right_signal -= (MAX_DELTA - MIN_DELTA) * abs(turn_signal)
 
         left_descending_signal = (
-            IMPORTANCE * left_signal + odor_taxis_command.importance * odor_taxis_command.left_descending_signal
+            IMPORTANCE * left_signal
+            + odor_taxis_command.importance * odor_taxis_command.left_descending_signal
         )
         right_descending_signal = (
-            IMPORTANCE * right_signal + odor_taxis_command.importance * odor_taxis_command.right_descending_signal
+            IMPORTANCE * right_signal
+            + odor_taxis_command.importance * odor_taxis_command.right_descending_signal
         )
 
-        return CommandWithImportance(left_descending_signal, right_descending_signal, IMPORTANCE)
+        return CommandWithImportance(
+            left_descending_signal, right_descending_signal, IMPORTANCE
+        )
 
-    def path_integration(self, obs: Observation): 
+    def path_integration(self, obs: Observation):
         heading = self.heading
         vel = obs["velocity"].copy()
 
@@ -203,20 +228,16 @@ class Controller(BaseController):
         self.integrated_position_history.appendleft(self.integrated_position.copy())
 
         rot_matrix = np.array(
-            [
-                [np.cos(heading), -np.sin(heading)],
-                [np.sin(heading), np.cos(heading)]
-            ]
+            [[np.cos(heading), -np.sin(heading)], [np.sin(heading), np.cos(heading)]]
         )
 
         world_frame_vel = vel.ravel() @ rot_matrix
         self.integrated_position += world_frame_vel * self.timestep
 
-        
     def return_to_home(self) -> np.ndarray:
         match self.controller_state:
             case ControllerState.SEEKING_ODOR:
-                # if we're in this, we need to change state to turning as soon as we enter. 
+                # if we're in this, we need to change state to turning as soon as we enter.
                 print("Unexpected state in return to home, should not be here")
                 self.controller_state = ControllerState.TURNING
             case ControllerState.TURNING:
@@ -227,11 +248,11 @@ class Controller(BaseController):
                 else:
                     self.controller_state = ControllerState.RETURNING_HOME
 
-                return np.array([0.0, 1.0])                 
+                return np.array([0.0, 1.0])
             case ControllerState.RETURNING_HOME:
                 # Homing: go back to initial position
                 # Compute vector to home
-                to_home =  -self.integrated_position
+                to_home = -self.integrated_position
                 dist_to_home = np.linalg.norm(to_home)
 
                 if dist_to_home < 4:  # Close enough, stop
@@ -246,19 +267,21 @@ class Controller(BaseController):
                 # Simple proportional controller for turning
                 if abs(heading_error) > 0.1:
                     # Turn towards home
-                    action = np.array([0.0, 1.0]) if heading_error > 0 else np.array([1.0, 0.0])
+                    action = (
+                        np.array([0.0, 1.0])
+                        if heading_error > 0
+                        else np.array([1.0, 0.0])
+                    )
                 else:
                     # Move forward
                     action = np.array([1.0, 1.0])
-                
+
                 return action
             case _:
                 raise RuntimeError(f"Invalid ControllerState {self.controller_state}")
-            
-                
 
     def get_actions(self, obs: Observation) -> Action:
-        self.time += self.timestep        
+        self.time += self.timestep
 
         # Update heading and position from observation
         self.heading = obs["heading"].copy()
@@ -268,15 +291,15 @@ class Controller(BaseController):
         odor_intensity = np.mean(obs["odor_intensity"])
         if odor_intensity > self.odor_threshold:
             self.controller_state = ControllerState.TURNING
-            
-        if self.controller_state == ControllerState.SEEKING_ODOR: 
+
+        if self.controller_state == ControllerState.SEEKING_ODOR:
             odor_taxis_command = self.get_odor_taxis(obs)
             combined_command = self.pillar_avoidance(obs, odor_taxis_command)
 
             drive = combined_command.get_drive()
         else:
-            drive = self.return_to_home()       
-        
+            drive = self.return_to_home()
+
         joint_angles, adhesion = step_cpg(
             cpg_network=self.cpg_network,
             preprogrammed_steps=self.preprogrammed_steps,
