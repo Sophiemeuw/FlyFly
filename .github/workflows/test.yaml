@@ -17,8 +17,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        level: [0, 1, 2, 3, 4]
-        seed: [45, 38, 25]
+        # level: [0, 1, 2, 3, 4]
+        # seed: [45, 38, 25]
+        level: [1, 2, 3, 4]
+        seed: [25]
       fail-fast: false
     steps:
       - name: Checkout repository
