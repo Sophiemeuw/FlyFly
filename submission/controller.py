@@ -145,7 +145,6 @@ class Controller(BaseController):
             # only if we've accumulated enough in buffer
             distance = np.linalg.norm(self.integrated_position_history[-1] - self.integrated_position)
             if distance < 2:
-                print(f"{self.integrated_position_history[0]=}, {self.integrated_position_history[1]=}, {self.integrated_position=}")
                 print(f"Stayed in place for too long: distance {distance}, escaping... ")
                 self.escape_timer = self.ESCAPE_DURATION
                 self.pos_inhibit_cooldown = self.POS_HIST_LEN + 1
