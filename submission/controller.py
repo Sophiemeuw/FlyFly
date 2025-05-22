@@ -4,7 +4,6 @@ from cobar_miniproject.base_controller import Action, BaseController, Observatio
 from .utils import get_cpg, step_cpg
 from typing import NamedTuple
 import numpy as np 
-from .looming_detector import LoomDetector
 from collections import deque
 
 
@@ -208,11 +207,6 @@ class Controller(BaseController):
         self.integrated_position += world_frame_vel * self.timestep
 
         
-
-    def ball_avoidance(self, obs: Observation) -> CommandWithImportance:
-        return CommandWithImportance(0, 0, 0)
-        
-
     def return_to_home(self) -> np.ndarray:
          # Stop and turn 180° at odor source
         if self.reached_target and self.turning and self.turning_steps < self.max_turning_steps:
@@ -249,17 +243,8 @@ class Controller(BaseController):
             
             return action
         
-    def decider(self, normal_pathway: CommandWithImportance, ball_avoid: CommandWithImportance) -> np.ndarray:
-        normal_importance, ball_importance = normal_pathway.importance, ball_avoid.importance
 
-        if normal_importance > ball_importance: 
-            drive = normal_pathway.get_drive()
-        else:
-            drive = ball_avoid.get_drive()
-        
-        return drive
-    
-    def get_actions(self, obs: Observation, suppress_motion=False) -> Action:
+    def get_actions(self, obs: Observation) -> Action:
         self.time += self.timestep        
 
         # Update heading and position from observation
@@ -274,11 +259,10 @@ class Controller(BaseController):
             self.turning_steps = 0
         
         if not self.reached_target: 
-            ball_cmd = self.ball_avoidance(obs)
             odor_taxis_command = self.get_odor_taxis(obs)
             combined_command = self.pillar_avoidance(obs, odor_taxis_command)
 
-            drive = self.decider(combined_command, ball_cmd)
+            drive = combined_command.get_drive()
         else:
             drive = self.return_to_home()        
 
