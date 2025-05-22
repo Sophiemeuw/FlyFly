@@ -43,6 +43,12 @@ class Controller(BaseController):
         self.timestep = timestep
         self.time = 0
 
+        # odor history
+        self.ODOR_HIST_LEN = 500
+        self.odor_history = deque([], self.ODOR_HIST_LEN)
+        self.odor_turn_timer = 0
+
+
         # Escape state
         self.escape_timer = 0
         self.turn_timer = 0
@@ -61,7 +67,7 @@ class Controller(BaseController):
         self.controller_state = ControllerState.SEEKING_ODOR
 
         self.turning_steps = 0
-        self.max_turning_steps = 100  # Number of steps to turn 180°
+        self.u_turning_steps = 100  # Number of steps to turn 180°
 
         self.last_drive = np.zeros(2)
 
@@ -78,6 +84,19 @@ class Controller(BaseController):
         BASE_IMPORTANCE = 0.4
         MAX_IMPORTANCE = 0.9
 
+        if self.odor_turn_timer > 0:
+            diff = obs["heading"] - self.odor_target_heading
+            if np.abs(diff) > 0.1:
+                magnitude = np.clip(diff, 0.2, 1)
+                if diff > 0: 
+                    return CommandWithImportance(0, magnitude, 0.8)
+                else:
+                    return CommandWithImportance(magnitude, 0, 0.8)
+            else: 
+                self.odor_turn_timer -= 1
+                return CommandWithImportance(0.5, 0.5, 0.8)
+
+
         velocity = obs["velocity"]
 
         I_right = (obs["odor_intensity"][0][1] + obs["odor_intensity"][0][3]) / 2
@@ -85,6 +104,8 @@ class Controller(BaseController):
         I_total = I_left + I_right
         I_norm = min(I_total / 0.0025, 1.0)
         importance = BASE_IMPORTANCE + (MAX_IMPORTANCE - BASE_IMPORTANCE) * I_norm
+
+        self.odor_history.appendleft(I_total)
 
         asymmetry = (I_left - I_right) / ((I_left + I_right + 1e-6) / 2)
         s = asymmetry * ODOR_GAIN
@@ -106,6 +127,17 @@ class Controller(BaseController):
             damping_factor = 1.0 - min(velocity_mag / VELOCITY_THRESHOLD, 1.0) * MAX_DAMPING
         else:
             damping_factor = 1.0
+            # we are too far away from the odor, trigger a turn if it's been decreasing
+            if self.odor_turn_timer == 0: 
+                differences = np.diff(self.odor_history)
+                percent_negative = np.count_nonzero(differences < 1e-7)/len(self.odor_history)
+                if percent_negative > 0.6:
+                    print("Going too far, triggering random turn")
+                    self.odor_turn_timer = 500
+                    self.odor_target_heading = obs["heading"] - np.pi
+                    if self.odor_target_heading < -np.pi:
+                        self.odor_target_heading = 2*np.pi + self.odor_target_heading
+
 
         left_descending_signal *= damping_factor
         right_descending_signal *= damping_factor
@@ -265,7 +297,7 @@ class Controller(BaseController):
                 self.controller_state = ControllerState.TURNING
             case ControllerState.TURNING:
                 # Stop and turn 180° at odor source
-                if self.turning_steps < self.max_turning_steps:
+                if self.turning_steps < self.u_turning_steps:
                     # Turn in place
                     self.turning_steps += 1
                 else:
