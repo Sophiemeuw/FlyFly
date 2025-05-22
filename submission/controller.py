@@ -5,6 +5,7 @@ from .utils import get_cpg, step_cpg
 from typing import NamedTuple
 import numpy as np 
 from .looming_detector import LoomDetector
+from collections import deque
 
 
 
@@ -33,13 +34,16 @@ class Controller(BaseController):
         # Escape state
         self.escape_timer = 0
         self.turn_timer = 0
-        self.escape_direction = 0.0  # left - right signal
+        self.escape_direction = 1  # left - right signal
         self.ESCAPE_DURATION = 1000
-        self.TURN_DURATION = 80
+        self.TURN_DURATION = 400
 
         # Path integration variables
         self.heading = 0.0
         self.integrated_position = np.zeros(2)
+        self.POS_HIST_LEN = 5000
+        self.integrated_position_history = deque([], self.POS_HIST_LEN)
+        self.pos_inhibit_cooldown = 0
         self.reached_target = False
         self.go_home = False
         self.odor_threshold = 0.2  # Set as appropriate for your environment
@@ -111,24 +115,39 @@ class Controller(BaseController):
         if self.escape_timer > 0:
             self.escape_timer -= 1
             # Turn slightly away from the contact force vector
-            turn_bias = np.clip(self.escape_direction, -1, 1)
-            left = 0.1 + 0.5 * (-turn_bias)
-            right = 0.1 + 0.5 * (turn_bias)
-            return CommandWithImportance(-left, -right, 1.0)
+            if self.escape_timer == 0: 
+                # start turn
+                self.turn_timer = self.TURN_DURATION
+
+            return CommandWithImportance(-0.5, -0.5, 1.0)
 
         if self.turn_timer > 0:
             self.turn_timer -= 1
-            return CommandWithImportance(0.1, 1.0, 1.0)
+            turn_bias = np.clip(self.escape_direction, -1, 1)
+            left = 0.1 + 0.5 * (-turn_bias)
+            right = 0.1 + 0.5 * (turn_bias)
+            return CommandWithImportance(left, right, 1.0)
 
         # Trigger escape if strong force and not moving
         if force_mag > 0.3 and velocity_mag < 0.4:
             self.escape_timer = self.ESCAPE_DURATION
-            self.turn_timer = self.TURN_DURATION
             # Direction to escape: +1 = left leg more contact → escape right
             #                     -1 = right leg more contact → escape left
             escape_vector = total_force
             self.escape_direction = np.sign(escape_vector[0])  # x-axis as directional hint
             return CommandWithImportance(-0.6, -0.6, 1.0)
+        
+        if self.pos_inhibit_cooldown > 0:
+            self.pos_inhibit_cooldown -= 1
+
+        # also check for integrated position...
+        if self.pos_inhibit_cooldown == 0 and self.escape_timer == 0 and len(self.integrated_position_history) == self.POS_HIST_LEN: 
+            # only if we've accumulated enough in buffer
+            distance = np.linalg.norm(self.integrated_position_history[-1] - self.integrated_position)
+            if distance < 2:
+                print(f"Stayed in place for too long: distance {distance}, escaping... ")
+                self.escape_timer = self.ESCAPE_DURATION
+                self.pos_inhibit_cooldown = self.POS_HIST_LEN + 1
 
         # Visual emergency
         if (
@@ -176,6 +195,8 @@ class Controller(BaseController):
         vel = obs["velocity"].copy()
         heading = -heading
 
+        self.integrated_position_history.appendleft(self.integrated_position.copy())
+
         rot_matrix = np.array(
             [
                 [np.cos(heading), -np.sin(heading)],
@@ -189,21 +210,7 @@ class Controller(BaseController):
         
 
     def ball_avoidance(self, obs: Observation) -> CommandWithImportance:
-        # Process current vision
-        detected = self.loom_detector.process(obs)
-        if detected: 
-            # reset ball escape timer 
-            print(f"Triggered escape")
-            self.ball_escape_timer = 1500
-
-        if self.ball_escape_timer > 0 and self.ball_escape_timer % 500 == 0:
-            print(f"Escaping... {self.ball_escape_timer}/1500")
-        
-        if self.ball_escape_timer > 0:
-            self.ball_escape_timer -= 1
-            return CommandWithImportance(1, 1, 0)
-        else: 
-            return CommandWithImportance(0, 0, 0)
+        return CommandWithImportance(0, 0, 0)
         
 
     def return_to_home(self) -> np.ndarray:
