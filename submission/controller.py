@@ -306,7 +306,8 @@ class Controller(BaseController):
         if odor_intensity > 0.2:
             self.controller_state = ControllerState.TURNING
         if self.controller_state == ControllerState.SEEKING_ODOR:
-            odor_taxis_command = self.get_odor_taxis(obs)
+            odor_taxis_command = self.get_odor_taxis(obs, obs["velocity"])
+
             combined_command = self.pillar_avoidance(obs, odor_taxis_command)
 
             drive = combined_command.get_drive()
