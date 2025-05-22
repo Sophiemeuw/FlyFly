@@ -1,6 +1,4 @@
 import numpy as np
-import shelve
-from datetime import datetime
 
 
 def get_cpg(timestep, seed=0):

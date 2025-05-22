@@ -6,13 +6,14 @@ from typing import NamedTuple
 from collections import deque
 from enum import IntEnum
 
-# descending signals with an "importance" metric. This was meant to be used to allow certain pathways to overrule other ones. 
+
+# descending signals with an "importance" metric. This was meant to be used to allow certain pathways to overrule other ones.
 # It is not used for that anymore, but is used to weight turning actions as they get modified by other downstream pathways
 class CommandWithImportance(NamedTuple):
     left_descending_signal: float
     right_descending_signal: float
     importance: float  # 0->1
-    
+
     # get an array that can be passed into the step_cpg
     def get_drive(self):
         return np.array([self.left_descending_signal, self.right_descending_signal])
@@ -22,6 +23,7 @@ class CommandWithImportance(NamedTuple):
 class EscapeDirection(IntEnum):
     LEFT = -1
     RIGHT = 1
+
 
 # Overall controller state
 class ControllerState(IntEnum):
