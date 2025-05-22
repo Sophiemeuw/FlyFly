@@ -1,7 +1,7 @@
 #!/bin/bash
 set -xe
 
-seeds=(43 32 51)
+seeds=(45 38 25)
 levels=(0 1 2 3 4)
 
 rm -rf outputs/latest
