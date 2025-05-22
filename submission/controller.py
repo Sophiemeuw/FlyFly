@@ -287,7 +287,7 @@ class Controller(BaseController):
     
     # Prevent huge changes to the drive
     def temper_drive(self, drive: np.ndarray) -> np.ndarray:
-        MAX_SLEW_RATE = 0.2
+        MAX_SLEW_RATE = 0.05
         delta = drive - self.last_drive
         delta = np.sign(delta) * np.clip(np.abs(delta), 0, MAX_SLEW_RATE)
 
