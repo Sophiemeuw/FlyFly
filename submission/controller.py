@@ -5,6 +5,7 @@ from .utils import get_cpg, step_cpg
 from typing import NamedTuple
 import numpy as np 
 from collections import deque
+from enum import IntEnum
 
 
 
@@ -17,6 +18,10 @@ class CommandWithImportance(NamedTuple):
 
     def get_drive(self):
         return np.array([self.left_descending_signal, self.right_descending_signal])
+    
+class EscapeDirection(IntEnum):
+    LEFT = -1
+    RIGHT = 1
 
 
 class Controller(BaseController):
@@ -33,7 +38,7 @@ class Controller(BaseController):
         # Escape state
         self.escape_timer = 0
         self.turn_timer = 0
-        self.escape_direction = 1  # left - right signal
+        self.escape_direction = EscapeDirection.LEFT
         self.ESCAPE_DURATION = 1000
         self.TURN_DURATION = 400
 
@@ -132,7 +137,7 @@ class Controller(BaseController):
             # Direction to escape: +1 = left leg more contact → escape right
             #                     -1 = right leg more contact → escape left
             escape_vector = total_force
-            self.escape_direction = np.sign(escape_vector[0])  # x-axis as directional hint
+            self.escape_direction = EscapeDirection(np.sign(escape_vector[0]))  # x-axis as directional hint
             return CommandWithImportance(-0.6, -0.6, 1.0)
         
         if self.pos_inhibit_cooldown > 0:
