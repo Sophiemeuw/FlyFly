@@ -100,7 +100,7 @@ class Controller(BaseController):
         VELOCITY_THRESHOLD = 0.4
         MAX_DAMPING = 0.5
 
-        if I_total > 0.0005:  # only damp near odor
+        if I_total > 0.5:  # only damp near odor
             damping_factor = 1.0 - min(velocity_mag / VELOCITY_THRESHOLD, 1.0) * MAX_DAMPING
         else:
             damping_factor = 1.0
