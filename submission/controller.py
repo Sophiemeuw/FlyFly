@@ -60,17 +60,17 @@ class Controller(BaseController):
 
         self.controller_state = ControllerState.SEEKING_ODOR
 
-        self.odor_threshold = 0.2
-        self.turning = False
         self.turning_steps = 0
         self.max_turning_steps = 100  # Number of steps to turn 180°
 
-        self.min_home = 100
-
-        self.ball_escape_timer = 0
+        self.last_drive = np.zeros(2)
+        self.desired_drive = np.zeros(2)
 
     def get_integrated_position(self) -> np.ndarray:
         return self.integrated_position.copy()
+
+    def get_last_drive(self) -> np.ndarray:
+        return self.last_drive.copy()
 
     def get_odor_taxis(self, obs: Observation) -> CommandWithImportance:
         ODOR_GAIN = -600
@@ -284,7 +284,15 @@ class Controller(BaseController):
                 return action
             case _:
                 raise RuntimeError(f"Invalid ControllerState {self.controller_state}")
+    
+    # Prevent huge changes to the drive
+    def temper_drive(self, drive: np.ndarray) -> np.ndarray:
+        MAX_SLEW_RATE = 0.2
+        delta = drive - self.last_drive
+        delta = np.sign(delta) * np.clip(np.abs(delta), 0, MAX_SLEW_RATE)
 
+        return self.last_drive + delta
+                 
     def get_actions(self, obs: Observation) -> Action:
         self.time += self.timestep
 
@@ -294,9 +302,9 @@ class Controller(BaseController):
 
         # Check if odor source is reached
         odor_intensity = np.mean(obs["odor_intensity"])
-        if odor_intensity > self.odor_threshold:
-            self.controller_state = ControllerState.TURNING
 
+        if odor_intensity > 0.2:
+            self.controller_state = ControllerState.TURNING
         if self.controller_state == ControllerState.SEEKING_ODOR:
             odor_taxis_command = self.get_odor_taxis(obs)
             combined_command = self.pillar_avoidance(obs, odor_taxis_command)
@@ -304,6 +312,9 @@ class Controller(BaseController):
             drive = combined_command.get_drive()
         else:
             drive = self.return_to_home()
+
+        drive = self.temper_drive(drive)
+        self.last_drive = drive
 
         joint_angles, adhesion = step_cpg(
             cpg_network=self.cpg_network,
@@ -328,6 +339,5 @@ class Controller(BaseController):
         self.initial_position = None
         self.reached_target = False
         self.go_home = False
-        self.turning = False
         self.turning_steps = 0
         self.homing_done = False
