@@ -88,10 +88,10 @@ class Controller(BaseController):
             diff = obs["heading"] - self.odor_target_heading
             if np.abs(diff) > 0.1:
                 if self.odor_turn_timer == 500:
-                    print("tuning...")
+                    print("turning...")
                     self.odor_turn_timer -= 1
                 magnitude = np.clip(diff, 0.2, 1)
-                if diff > 0: 
+                if diff < 0: 
                     return CommandWithImportance(-0.2, magnitude, 0.8)
                 else:
                     return CommandWithImportance(magnitude, -0.2, 0.8)
@@ -236,6 +236,7 @@ class Controller(BaseController):
             or left_side_brightness < 3
             or right_side_brightness < 3
         ) and velocity_mag < 0.2:
+            print("")
             if left_side_brightness < right_side_brightness:
                 left_signal = 0.1
                 right_signal = 1.0
@@ -254,6 +255,8 @@ class Controller(BaseController):
                 + (1 - IMPORTANCE) * odor_taxis_command.right_descending_signal,
                 IMPORTANCE,
             )
+        
+
         
         # Regular vision-based turning
         diff = left_weighted - right_weighted
