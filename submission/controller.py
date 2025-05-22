@@ -87,12 +87,17 @@ class Controller(BaseController):
         if self.odor_turn_timer > 0:
             diff = obs["heading"] - self.odor_target_heading
             if np.abs(diff) > 0.1:
+                if self.odor_turn_timer == 500:
+                    print("tuning...")
+                    self.odor_turn_timer -= 1
                 magnitude = np.clip(diff, 0.2, 1)
                 if diff > 0: 
-                    return CommandWithImportance(0, magnitude, 0.8)
+                    return CommandWithImportance(-0.2, magnitude, 0.8)
                 else:
-                    return CommandWithImportance(magnitude, 0, 0.8)
+                    return CommandWithImportance(magnitude, -0.2, 0.8)
             else: 
+                if self.odor_turn_timer == 499:
+                    print("straight...")
                 self.odor_turn_timer -= 1
                 return CommandWithImportance(0.5, 0.5, 0.8)
 
