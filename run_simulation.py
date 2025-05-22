@@ -100,7 +100,7 @@ def run_simulation(
             flip_itr = 0
 
         if flip_itr > 500:
-            #return early
+            print("Flipped, exiting early...")
             break
 
         if hasattr(controller, "quit") and controller.quit:
