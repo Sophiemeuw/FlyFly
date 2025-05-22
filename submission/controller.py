@@ -189,21 +189,7 @@ class Controller(BaseController):
         
 
     def ball_avoidance(self, obs: Observation) -> CommandWithImportance:
-        # Process current vision
-        detected = self.loom_detector.process(obs)
-        if detected: 
-            # reset ball escape timer 
-            print(f"Triggered escape")
-            self.ball_escape_timer = 1500
-
-        if self.ball_escape_timer > 0 and self.ball_escape_timer % 500 == 0:
-            print(f"Escaping... {self.ball_escape_timer}/1500")
-        
-        if self.ball_escape_timer > 0:
-            self.ball_escape_timer -= 1
-            return CommandWithImportance(1, 1, 0)
-        else: 
-            return CommandWithImportance(0, 0, 0)
+        return CommandWithImportance(0, 0, 0)
         
 
     def return_to_home(self) -> np.ndarray:
