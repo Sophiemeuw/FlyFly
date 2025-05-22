@@ -3,13 +3,8 @@ import random
 from cobar_miniproject.base_controller import Action, BaseController, Observation
 from .utils import get_cpg, step_cpg
 from typing import NamedTuple
-import numpy as np 
 from collections import deque
 from enum import IntEnum
-
-
-
-
 
 class CommandWithImportance(NamedTuple):
     left_descending_signal: float
@@ -27,8 +22,6 @@ class ControllerState(IntEnum):
     SEEKING_ODOR = 0
     TURNING = 1
     RETURNING_HOME = 2
-
-    
 
 class Controller(BaseController):
     def __init__(self, timestep=1e-4, seed=0):
@@ -151,16 +144,16 @@ class Controller(BaseController):
         if self.pos_inhibit_cooldown > 0:
             self.pos_inhibit_cooldown -= 1
 
-        # also check for integrated position...
+        # Final fallback: if we've stayed in the same place for a long time then trigger an escape behaviour.
+        # Has a cooldown to ensure the position history buffer has enough time to fully turnover.
         if self.pos_inhibit_cooldown == 0 and self.escape_timer == 0 and len(self.integrated_position_history) == self.POS_HIST_LEN: 
-            # only if we've accumulated enough in buffer
             distance = np.linalg.norm(self.integrated_position_history[-1] - self.integrated_position)
             if distance < 2:
                 print(f"Stayed in place for too long: distance {distance}, escaping... ")
                 self.escape_timer = self.ESCAPE_DURATION
                 self.pos_inhibit_cooldown = self.POS_HIST_LEN + 1
 
-        # Visual emergency
+        # Visual emergency: 
         if (
             front_overlap_brightness < 10
             or left_side_brightness < 3
