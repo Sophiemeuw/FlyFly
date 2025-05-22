@@ -140,8 +140,8 @@ class Controller(BaseController):
         if self.turn_timer > 0:
             self.turn_timer -= 1
             turn_bias = np.clip(self.escape_direction, -1, 1)
-            left = 0.1 + 0.5 * (-turn_bias)
-            right = 0.1 + 0.5 * (turn_bias)
+            left = 0.1 + 0.3 * (-turn_bias)
+            right = 0.1 + 0.3 * (turn_bias)
             return CommandWithImportance(left, right, 1.0)
 
         # Trigger escape if strong force and not moving
