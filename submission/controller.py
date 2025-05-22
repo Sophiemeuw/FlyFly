@@ -215,7 +215,7 @@ class Controller(BaseController):
                 + (1 - IMPORTANCE) * odor_taxis_command.right_descending_signal,
                 IMPORTANCE,
             )
-
+        
         # Regular vision-based turning
         diff = left_weighted - right_weighted
         turn_signal = np.tanh(GAIN * diff) + np.random.uniform(-0.05, 0.05)
@@ -310,14 +310,9 @@ class Controller(BaseController):
 
         odor_intensity = np.mean(obs["odor_intensity"])
 
-        # Switch to turning state only if we're in SEEKING_ODOR and really detect odor
-        if self.controller_state == ControllerState.SEEKING_ODOR and odor_intensity > 0.2:
+        if odor_intensity > 0.2:
             self.controller_state = ControllerState.TURNING
-
-        # (Optional) switch back if we lose odor completely
-        elif self.controller_state == ControllerState.TURNING and odor_intensity < 0.05:
-            self.controller_state = ControllerState.SEEKING_ODOR
-
+            
         if self.controller_state == ControllerState.SEEKING_ODOR:
             odor_taxis_command = self.get_odor_taxis(obs, obs["velocity"])
             combined_command = self.pillar_avoidance(obs, odor_taxis_command)
