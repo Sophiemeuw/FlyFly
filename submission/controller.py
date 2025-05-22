@@ -86,7 +86,7 @@ class Controller(BaseController):
 
         if self.odor_turn_timer > 0:
             diff = obs["heading"] - self.odor_target_heading
-            if np.abs(diff) > 0.1:
+            if np.abs(diff) > 0.02:
                 if self.odor_turn_timer == 500:
                     print("turning...")
                     self.odor_turn_timer -= 1
@@ -236,7 +236,6 @@ class Controller(BaseController):
             or left_side_brightness < 3
             or right_side_brightness < 3
         ) and velocity_mag < 0.2:
-            print("")
             if left_side_brightness < right_side_brightness:
                 left_signal = 0.1
                 right_signal = 1.0
