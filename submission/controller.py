@@ -53,7 +53,6 @@ class Controller(BaseController):
         
         self.min_home = 100
 
-        self.loom_detector = LoomDetector(debug=True)
         self.ball_escape_timer = 0
 
     def get_integrated_position(self) -> np.ndarray:
