@@ -96,7 +96,7 @@ def run_simulation(
         
 
         if i % 1000 == 0 and debug:
-            print(f"{np.linalg.norm(obs["debug_fly"][0][0:2] - level_arena.target_position)}")
+            print(f"Distance: {np.linalg.norm(obs['debug_fly'][0][0:2] - level_arena.target_position):5.2f}")
 
         if info["flip"]: 
             flip_itr += 1
