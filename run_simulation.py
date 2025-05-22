@@ -94,6 +94,10 @@ def run_simulation(
         obs_hist.append(obs_)
         info_hist.append(info)
 
+        if info["flip"]: 
+            print("Flip detected, quitting early...")
+            break
+
         if hasattr(controller, "quit") and controller.quit:
             print("Simulation terminated by user.")
             clean_quit = True
@@ -128,6 +132,7 @@ def run_simulation(
                 if "vision" in hist_entry
             ],
         }
+
         with open(f"{pickle_save_path}.pkl", "wb") as f:
             pickle.dump(video_frames, f)
 
