@@ -20,7 +20,6 @@ def run_simulation(
     max_steps,
     output_dir="outputs",
     progress=True,
-    suppress_motion=False,
     pickle=""
 ):
     # sys.path.append(str(submission_dir.parent))
@@ -74,7 +73,7 @@ def run_simulation(
     clean_quit = False
     for i in step_range:
         # Get observations
-        obs, reward, terminated, truncated, info = sim.step(controller.get_actions(obs, suppress_motion=suppress_motion))
+        obs, reward, terminated, truncated, info = sim.step(controller.get_actions(obs))
         sim.render()
         if controller.done_level(obs):
             # finish the path integration level
@@ -185,10 +184,6 @@ if __name__ == "__main__":
         action="store_true",
         help="Show progress bar during simulation.",
     )
-    parser.add_argument(
-        "--suppress-motion", 
-        action="store_true"
-    )
 
     parser.add_argument(
         "--pickle",
@@ -205,6 +200,5 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         max_steps=args.max_steps,
         progress=args.progress,
-        suppress_motion=args.suppress_motion,
         pickle=args.pickle
     )
