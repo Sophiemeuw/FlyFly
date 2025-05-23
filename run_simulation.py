@@ -1,7 +1,5 @@
 from pathlib import Path
-import importlib
 import argparse
-import sys
 from tqdm import trange
 from flygym import Camera
 from cobar_miniproject import levels
@@ -96,6 +94,9 @@ def run_simulation(
 
         obs_["intrinsic_pos"] = controller.get_integrated_position()
         obs_["drive"] = controller.get_last_drive()
+
+        for key, value in controller.get_intermediate_signals().items():
+            obs_[key] = value
         obs_hist.append(obs_)
         info_hist.append(info)
 
