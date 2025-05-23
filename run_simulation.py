@@ -10,6 +10,7 @@ from flygym import Camera, SingleFlySimulation
 from flygym.arena import FlatTerrain
 from submission import Controller
 import numpy as np
+import pickle
 
 
 def run_simulation(
@@ -20,7 +21,8 @@ def run_simulation(
     max_steps,
     output_dir="outputs",
     progress=True,
-    pickle=""
+    save_video="", 
+    save_obs=False
 ):
     # sys.path.append(str(submission_dir.parent))
     # module = importlib.import_module(submission_dir.name)
@@ -91,6 +93,9 @@ def run_simulation(
             t.append(i)
         if "raw_vision" in info:
             del info["raw_vision"]
+
+        obs_["intrinsic_pos"] = controller.get_integrated_position()
+        obs_["drive"] = controller.get_last_drive()
         obs_hist.append(obs_)
         info_hist.append(info)
 
@@ -113,16 +118,15 @@ def run_simulation(
             break
 
     # Save video
-    save_path = Path(output_dir) / f"level{level}_seed{seed}.mp4"
+    file_name_prefix = f"level{level}_seed{seed}"
+    save_path = Path(output_dir) / f"{file_name_prefix}.mp4"
     save_path.parent.mkdir(parents=True, exist_ok=True)
     cam.save_video(save_path, stabilization_time=0)
 
-
-    pickle_save_path = pickle
-    if pickle_save_path:
-        import os
-        import pickle
-        print(f"Pickling...")
+   
+    if save_video:
+        pickle_save_path = Path(output_dir) / f"{file_name_prefix}_video.pkl"
+        print(f"Saving video data to {pickle_save_path}")
 
         video_frames = {
             "t": t,
@@ -138,8 +142,36 @@ def run_simulation(
             ],
         }
 
-        with open(f"{pickle_save_path}.pkl", "wb") as f:
+        with open(pickle_save_path, "wb") as f:
             pickle.dump(video_frames, f)
+
+    if save_obs:
+        from dm_control.mjcf.physics import SynchronizingArrayWrapper
+
+        save_obs_path = Path(output_dir) / f"{file_name_prefix}_obs.pkl"
+        save_obs_path.parent.mkdir(parents=True, exist_ok=True)
+
+        print(f"Saving non-video data to {save_obs_path}")
+
+        for obs in obs_hist: 
+            if "raw_vision" in obs:
+                del obs["raw_vision"]
+            if "vision" in obs:
+                del obs["vision"]
+            
+            for k in obs.keys():
+                if type(obs[k]) is SynchronizingArrayWrapper:
+                    obs[k] = np.array(obs[k])
+        for info in info_hist: 
+            if "raw_vision" in info:
+                del info["raw_vision"]
+        
+        data = {
+            "obs_hist": obs_hist,
+            "info_hist": info_hist
+        }
+        with open(save_obs_path, "wb") as f:
+            pickle.dump(data, f)  
 
     if clean_quit: 
         exit(0)
@@ -192,8 +224,15 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--pickle",
-        help="save images from observations in a pickle with this path."
+        "--save-video",
+        action="store_true",
+        help="save images from observations in a pickle."
+    )
+
+    parser.add_argument(
+        "--save-obs", 
+        action="store_true",
+        help="Save the observation and info history"
     )
 
     args = parser.parse_args()
@@ -206,5 +245,6 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         max_steps=args.max_steps,
         progress=args.progress,
-        pickle=args.pickle
+        save_video=args.save_video, 
+        save_obs=args.save_obs
     )
