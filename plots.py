@@ -40,13 +40,13 @@ def _(nb, np, plt):
         px_y, px_x = id_map.shape
         image_left = np.zeros((px_y, px_x, 3))
         image_left = _color_image(id_map, image_left, color_map["neutral"], (0, 721))
-        image_left = _color_image(id_map, image_left, color_map["front"], (620, 721))
-        image_left = _color_image(id_map, image_left, color_map["side"], (500, 620))
+        image_left = _color_image(id_map, image_left, color_map["front"], (610, 721))
+        image_left = _color_image(id_map, image_left, color_map["side"], (490, 610))
 
         image_right = np.zeros((px_y, px_x, 3))
         image_right = _color_image(id_map, image_right, color_map["neutral"], (0, 721))
-        image_right = _color_image(id_map, image_right, color_map["front"], (0, 100))
-        image_right = _color_image(id_map, image_right, color_map["side"], (100, 220))
+        image_right = _color_image(id_map, image_right, color_map["front"], (0, 111))
+        image_right = _color_image(id_map, image_right, color_map["side"], (111, 231))
 
         fig, ax = plt.subplots(1, 2)
         ax[0].imshow(image_left)
