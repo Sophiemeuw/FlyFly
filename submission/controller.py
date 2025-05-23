@@ -132,7 +132,11 @@ class Controller(BaseController):
         total_force = front_forces + middle_forces
         force_mag = np.linalg.norm(total_force)
 
+        self.intermediate_signals["total_force"] = total_force
         self.intermediate_signals["force_mag"] = force_mag
+        self.intermediate_signals["front_overlap_brightness"] = front_overlap_brightness
+        self.intermediate_signals["left_side_brightness"] = left_side_brightness
+        self.intermediate_signals["right_side_brightness"] = right_side_brightness
 
         # -------- ESCAPE MODE --------
         if self.escape_timer > 0:
