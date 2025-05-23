@@ -117,11 +117,11 @@ class Controller(BaseController):
         brightness = np.mean(vision, axis=2)
         left_weighted = np.sum(brightness[0])
         right_weighted = np.sum(brightness[1])
-        left_front = brightness[0, 620:]
-        right_front = brightness[1, :100]
+        left_front = brightness[0, 610:]
+        right_front = brightness[1, :111]
         front_overlap_brightness = np.mean(np.concatenate([left_front, right_front]))
-        left_side_brightness = np.mean(brightness[0, 500:620])
-        right_side_brightness = np.mean(brightness[1, 100:220])
+        left_side_brightness = np.mean(brightness[0, 490:620])
+        right_side_brightness = np.mean(brightness[1, 111:231])
 
         velocity_mag = np.linalg.norm(obs["velocity"][:2])
         contact = obs["contact_forces"]
