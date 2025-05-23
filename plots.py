@@ -11,7 +11,12 @@ def _():
     import numpy as np
     import pickle
     import polars as pl
-    return nb, np, pickle, pl, plt
+    import os
+    plt.rcParams['legend.frameon']      = True
+    plt.rcParams['legend.facecolor']    = 'white'
+    plt.rcParams['legend.edgecolor']    = 'gray'
+    plt.rcParams['legend.framealpha']   = 0.9
+    return nb, np, os, pickle, pl, plt
 
 
 @app.cell(hide_code=True)
@@ -192,6 +197,24 @@ def _(load_data, pl, plt, standard_axes_treatment):
         return fig, ax
 
 
+    def make_steering_plot(obs_hist, info_hist):
+
+        fig, axes = plt.subplots(4, 1)
+        make_single_value_time_plot(axes[0], obs_hist, info_hist, "s", "Assymmetry")
+        make_drive_time_plot(axes[1], obs_hist, info_hist, "odor_taxis_drive")
+        make_drive_time_plot(axes[2], obs_hist, info_hist, "drive")
+        make_single_value_time_plot(axes[3], obs_hist, info_hist, "left_side_brightness", label="left")
+        make_single_value_time_plot(axes[3], obs_hist, info_hist, "right_side_brightness", label="right")
+        make_single_value_time_plot(axes[3], obs_hist, info_hist, "front_overlap_brightness", label="front")
+
+        axes[3].set_ylabel("Side Brightness")
+
+        standard_axes_treatment(axes)
+        fig.set_tight_layout(True)
+
+        return fig, axes
+
+
 
     return (
         make_drive_time_plot,
@@ -199,6 +222,7 @@ def _(load_data, pl, plt, standard_axes_treatment):
         make_plot_level0_xy,
         make_plot_level0_zoomed,
         make_single_value_time_plot,
+        make_steering_plot,
         make_xy_plot,
     )
 
@@ -219,33 +243,20 @@ def _(make_plot_level0_xy, make_plot_level0_zoomed):
 @app.cell
 def _(
     load_data,
-    make_drive_time_plot,
-    make_single_value_time_plot,
+    make_steering_plot,
     make_xy_plot,
     plt,
     standard_axes_treatment,
 ):
-    def make_level1_plot():
+    def make_level1_plot(): 
         obs_hist, info_hist = load_data("data/level1_seed10_obs.pkl")
-
-        fig, axes = plt.subplots(4, 1)
-        make_single_value_time_plot(axes[0], obs_hist, info_hist, "s", "Assymmetry")
-        make_drive_time_plot(axes[1], obs_hist, info_hist, "odor_taxis_drive")
-        make_drive_time_plot(axes[2], obs_hist, info_hist, "drive")
-        make_single_value_time_plot(axes[3], obs_hist, info_hist, "left_side_brightness", label="left")
-        make_single_value_time_plot(axes[3], obs_hist, info_hist, "right_side_brightness", label="right")
-
-        axes[3].set_ylabel("Side Brightness")
-
-
-        # can see that at 0.6 it forces a 
-
-
-
-        standard_axes_treatment(axes)
-        fig.set_tight_layout(True)
+        fig, ax = make_steering_plot(obs_hist, info_hist)
         fig.savefig("plots/level1.png")
-        return fig, axes
+        return fig, ax
+
+
+
+    
 
     def make_level1_xy_plot():
         obs_hist, info_hist = load_data("data/level1_seed10_obs.pkl")
@@ -273,6 +284,87 @@ def _(make_level1_plot):
 @app.cell
 def _(make_level1_xy_plot):
     make_level1_xy_plot()
+    return
+
+
+@app.cell
+def _(load_data, make_steering_plot):
+    def make_level2_plot():
+        obs_hist, info_hist = load_data("data/level2_seed25_obs.pkl")
+        # obs_hist = obs_hist.head(7500)
+        fig, ax = make_steering_plot(obs_hist, info_hist)
+
+        fig.savefig("plots/level2.png")
+
+        return fig, ax
+    return (make_level2_plot,)
+
+
+@app.cell
+def _(make_level2_plot):
+    make_level2_plot()
+    return
+
+
+@app.cell
+def _(
+    load_data,
+    make_drive_time_plot,
+    make_single_value_time_plot,
+    make_xy_plot,
+    os,
+    plt,
+    standard_axes_treatment,
+):
+    def get_img_filename(data_file, suffix=""):
+        filename = f"plots/{os.path.splitext(os.path.split(data_file)[1])[0]}"
+        if suffix:
+            filename += suffix
+
+        filename += ".png"
+        return filename
+
+    def make_wandering_failure_plot(file, limit=False):
+        obs_hist, info_hist = load_data(file)
+        if limit: 
+            obs_hist = obs_hist.slice(70000,10000)
+        fig, ax = plt.subplots(3, 1)
+        make_drive_time_plot(ax[2], obs_hist, info_hist, "drive")
+        make_drive_time_plot(ax[1], obs_hist, info_hist, "odor_taxis_drive")
+        make_single_value_time_plot(ax[0], obs_hist, info_hist, "I_total")
+        # fig, ax = make_steering_plot(obs_hist, info_hist)
+    
+        standard_axes_treatment(ax)
+        fig.set_tight_layout(True)
+        fig.savefig(get_img_filename(file,  "limited" if limit else ""))
+
+    
+        return fig, ax
+
+    def make_xy_plot_from_file(file):
+        obs_hist, info_hist = load_data(file)
+        fig, ax = plt.subplots()
+        fig.set_size_inches(5, 5)
+
+        make_xy_plot(ax, obs_hist, info_hist)
+        standard_axes_treatment(ax)
+
+        fig.savefig(get_img_filename(file, "xy"))
+        return fig, ax
+    
+    make_wandering_failure_plot("data/fail_wandering_level1_seed45.pkl")
+    return make_wandering_failure_plot, make_xy_plot_from_file
+
+
+@app.cell
+def _(make_xy_plot_from_file):
+    make_xy_plot_from_file("data/fail_wandering_level1_seed45.pkl")
+    return
+
+
+@app.cell
+def _(make_wandering_failure_plot):
+    make_wandering_failure_plot("data/fail_wandering_level1_seed45.pkl", True)
     return
 
 
