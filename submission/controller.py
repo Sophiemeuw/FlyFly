@@ -240,6 +240,9 @@ class Controller(BaseController):
             + odor_taxis_command.importance * odor_taxis_command.right_descending_signal
         )
 
+        left_descending_signal = np.clip(left_descending_signal, -1, 1)
+        right_descending_signal = np.clip(right_descending_signal, -1, 1)
+
         return CommandWithImportance(
             left_descending_signal, right_descending_signal, IMPORTANCE
         )
