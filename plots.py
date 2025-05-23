@@ -38,7 +38,7 @@ def _(nb, np, plt):
             "front": np.array([1, 0, 0]),
             "side": np.array([0, 1, 0])
         }
-    
+
         px_y, px_x = id_map.shape
         image_left = np.zeros((px_y, px_x, 3))
         image_left = _color_image(id_map, image_left, color_map["neutral"], (0, 721))
@@ -67,13 +67,13 @@ def _(nb, np, plt):
         fig.set_tight_layout(True)
         fig.savefig("plots/image_regions.png")
         plt.show()
-    
+
     make_id_map_plot()
     return
 
 
 @app.cell
-def _(pickle, pl):
+def _(np, pickle, pl):
     def load_data(pickle_path):
         with open(pickle_path, "rb") as f:
             data = pickle.load(f)
@@ -85,11 +85,20 @@ def _(pickle, pl):
 
         return obs_hist, info_hist
 
-    return (load_data,)
+
+    def standard_axes_treatment(ax): 
+        if type(ax) is not np.ndarray:
+            ax = [ax]
+
+        for axis in ax: 
+            axis.grid()
+            axis.legend()
+
+    return load_data, standard_axes_treatment
 
 
 @app.cell
-def _(load_data, pl, plt):
+def _(load_data, pl, plt, standard_axes_treatment):
     def make_time_axis_labels(ax, ylabel):
         ax.set_xlabel("t [s]")
         ax.set_ylabel(ylabel)
@@ -126,24 +135,26 @@ def _(load_data, pl, plt):
         ax.plot(t, drive_r, label="right")
         make_time_axis_labels(ax, drive_name.replace("_", " ").title())
 
-    def make_single_value_time_plot(ax, obs_hist, info_hist, value_key, ylabel="") -> plt.Axes:
+    def make_single_value_time_plot(ax, obs_hist, info_hist, value_key, ylabel="", label=None) -> plt.Axes:
         t = obs_hist.select("t")
         y = obs_hist.select(value_key)
 
-        ax.plot(t, y)
+        ax.plot(t, y, label=label)
         if not ylabel:
             ylabel = value_key.replace("_", " ").title()
         make_time_axis_labels(ax, ylabel)
 
     def make_plot_level0_overall():
         obs_hist, info_hist = load_data("data/level0_seed38_obs.pkl")
-        fig, ax = plt.subplots()
-        ax.set_title("Odor Intensity")
-        make_odor_time_plot(ax, obs_hist, info_hist)
+        fig, ax = plt.subplots(2, 1)
+        ax[0].set_title("Odor Intensity")
+        make_odor_time_plot(ax[0], obs_hist, info_hist)
+        make_drive_time_plot(ax[1], obs_hist, info_hist, "drive")
 
-        ax.legend()
-        ax.grid()
+        standard_axes_treatment(ax)
 
+        fig.set_tight_layout(True)
+        fig.savefig("plots/level0_overall.png")
         return fig, ax
 
     def make_plot_level0_zoomed():
@@ -153,22 +164,43 @@ def _(load_data, pl, plt):
 
         fig, ax = plt.subplots(4, 1)
         make_odor_time_plot(ax[0], obs_hist, info_hist)
-        make_single_value_time_plot(ax[1], obs_hist, info_hist, "s", ylabel="Assymmetry")
+        make_single_value_time_plot(ax[1], obs_hist, info_hist, "s", ylabel="Odor Assymmetry")
+        ax[1].axhline(0, color="red", label="zero")
         make_drive_time_plot(ax[2], obs_hist, info_hist, "odor_taxis_drive")
         make_drive_time_plot(ax[3], obs_hist, info_hist, "drive")
 
 
-        for axis in ax:
-            axis.legend()
-            axis.grid()
+        standard_axes_treatment(ax)
+
+        fig.set_tight_layout(True)
+        fig.savefig("plots/level0_zoomed.png")
 
         return fig, ax
-    
-    
+
+
+    def make_plot_level0_xy():
+        obs_hist, info_hist = load_data("data/level0_seed38_obs.pkl")
+        fig, ax = plt.subplots()
+        fig.set_size_inches(5, 5)
+
+        make_xy_plot(ax, obs_hist, info_hist)
+
+        standard_axes_treatment(ax)
+        fig.set_tight_layout(True)
+        fig.savefig("plots/level0_xy.png")
+
+        return fig, ax
 
 
 
-    return make_plot_level0_overall, make_plot_level0_zoomed
+    return (
+        make_drive_time_plot,
+        make_plot_level0_overall,
+        make_plot_level0_xy,
+        make_plot_level0_zoomed,
+        make_single_value_time_plot,
+        make_xy_plot,
+    )
 
 
 @app.cell
@@ -178,13 +210,69 @@ def _(make_plot_level0_overall):
 
 
 @app.cell
-def _(make_plot_level0_zoomed):
+def _(make_plot_level0_xy, make_plot_level0_zoomed):
     make_plot_level0_zoomed()
+    make_plot_level0_xy()
     return
 
 
 @app.cell
-def _():
+def _(
+    load_data,
+    make_drive_time_plot,
+    make_single_value_time_plot,
+    make_xy_plot,
+    plt,
+    standard_axes_treatment,
+):
+    def make_level1_plot():
+        obs_hist, info_hist = load_data("data/level1_seed10_obs.pkl")
+
+        fig, axes = plt.subplots(4, 1)
+        make_single_value_time_plot(axes[0], obs_hist, info_hist, "s", "Assymmetry")
+        make_drive_time_plot(axes[1], obs_hist, info_hist, "odor_taxis_drive")
+        make_drive_time_plot(axes[2], obs_hist, info_hist, "drive")
+        make_single_value_time_plot(axes[3], obs_hist, info_hist, "left_side_brightness", label="left")
+        make_single_value_time_plot(axes[3], obs_hist, info_hist, "right_side_brightness", label="right")
+
+        axes[3].set_ylabel("Side Brightness")
+
+
+        # can see that at 0.6 it forces a 
+
+
+
+        standard_axes_treatment(axes)
+        fig.set_tight_layout(True)
+        fig.savefig("plots/level1.png")
+        return fig, axes
+
+    def make_level1_xy_plot():
+        obs_hist, info_hist = load_data("data/level1_seed10_obs.pkl")
+        fig, ax = plt.subplots()
+        fig.set_size_inches(5, 5)
+
+        make_xy_plot(ax, obs_hist, info_hist)
+
+        standard_axes_treatment(ax)
+
+        fig.set_tight_layout(True)
+        fig.savefig("plots/level1_xy.png")
+    
+
+        return fig, ax
+    return make_level1_plot, make_level1_xy_plot
+
+
+@app.cell
+def _(make_level1_plot):
+    make_level1_plot()
+    return
+
+
+@app.cell
+def _(make_level1_xy_plot):
+    make_level1_xy_plot()
     return
 
 
