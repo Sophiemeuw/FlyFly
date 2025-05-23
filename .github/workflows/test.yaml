@@ -18,7 +18,7 @@ jobs:
     strategy:
       matrix:
         level: [0, 1, 2, 3, 4]
-        seed: [45, 38, 25]
+        seed: [45, 38, 25, 4, 77, 22, 90, 102, 555, 230]
       fail-fast: false
     steps:
       - name: Checkout repository
