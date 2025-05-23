@@ -90,8 +90,16 @@ class Controller(BaseController):
         I_norm = min(I_total / 0.0015, 1.0)
         importance = BASE_IMPORTANCE + (MAX_IMPORTANCE - BASE_IMPORTANCE) * I_norm
 
+        self.intermediate_signals["I_right"] = I_right
+        self.intermediate_signals["I_left"] = I_left
+        self.intermediate_signals["I_total"] = I_total
+
         asymmetry = (I_left - I_right) / ((I_left + I_right + 1e-6) / 2)
+        self.intermediate_signals["asymmetry"] = asymmetry
+
         s = asymmetry * ODOR_GAIN
+        self.intermediate_signals["s"] = s
+
         turning_bias = np.abs(np.tanh(s))
 
         if s > 0:
