@@ -5,6 +5,7 @@ from .utils import get_cpg, step_cpg
 from typing import NamedTuple
 from collections import deque
 from enum import IntEnum
+from copy import deepcopy
 
 
 # descending signals with an "importance" metric. This was meant to be used to allow certain pathways to overrule other ones.
@@ -65,11 +66,16 @@ class Controller(BaseController):
 
         self.last_drive = np.zeros(2)
 
+        self.intermediate_signals = {}
+
     def get_integrated_position(self) -> np.ndarray:
         return self.integrated_position.copy()
 
     def get_last_drive(self) -> np.ndarray:
         return self.last_drive.copy()
+
+    def get_intermediate_signals(self) -> np.ndarray: 
+        return deepcopy(self.intermediate_signals)
 
     def get_odor_taxis(self, obs: Observation) -> CommandWithImportance:
         ODOR_GAIN = -600
@@ -84,8 +90,16 @@ class Controller(BaseController):
         I_norm = min(I_total / 0.0015, 1.0)
         importance = BASE_IMPORTANCE + (MAX_IMPORTANCE - BASE_IMPORTANCE) * I_norm
 
+        self.intermediate_signals["I_right"] = I_right
+        self.intermediate_signals["I_left"] = I_left
+        self.intermediate_signals["I_total"] = I_total
+
         asymmetry = (I_left - I_right) / ((I_left + I_right + 1e-6) / 2)
+        self.intermediate_signals["asymmetry"] = asymmetry
+
         s = asymmetry * ODOR_GAIN
+        self.intermediate_signals["s"] = s
+
         turning_bias = np.abs(np.tanh(s))
 
         if s > 0:
@@ -111,11 +125,11 @@ class Controller(BaseController):
         brightness = np.mean(vision, axis=2)
         left_weighted = np.sum(brightness[0])
         right_weighted = np.sum(brightness[1])
-        left_front = brightness[0, 620:]
-        right_front = brightness[1, :100]
+        left_front = brightness[0, 610:]
+        right_front = brightness[1, :111]
         front_overlap_brightness = np.mean(np.concatenate([left_front, right_front]))
-        left_side_brightness = np.mean(brightness[0, 500:620])
-        right_side_brightness = np.mean(brightness[1, 100:220])
+        left_side_brightness = np.mean(brightness[0, 490:620])
+        right_side_brightness = np.mean(brightness[1, 111:231])
 
         velocity_mag = np.linalg.norm(obs["velocity"][:2])
         contact = obs["contact_forces"]
@@ -125,6 +139,12 @@ class Controller(BaseController):
         middle_forces = contact[1][:2] + contact[4][:2]
         total_force = front_forces + middle_forces
         force_mag = np.linalg.norm(total_force)
+
+        self.intermediate_signals["total_force"] = total_force
+        self.intermediate_signals["force_mag"] = force_mag
+        self.intermediate_signals["front_overlap_brightness"] = front_overlap_brightness
+        self.intermediate_signals["left_side_brightness"] = left_side_brightness
+        self.intermediate_signals["right_side_brightness"] = right_side_brightness
 
         # -------- ESCAPE MODE --------
         if self.escape_timer > 0:
@@ -220,6 +240,9 @@ class Controller(BaseController):
             + odor_taxis_command.importance * odor_taxis_command.right_descending_signal
         )
 
+        left_descending_signal = np.clip(left_descending_signal, -1, 1)
+        right_descending_signal = np.clip(right_descending_signal, -1, 1)
+
         return CommandWithImportance(
             left_descending_signal, right_descending_signal, IMPORTANCE
         )
@@ -295,12 +318,16 @@ class Controller(BaseController):
         # Check if odor source is reached
         odor_intensity = np.mean(obs["odor_intensity"])
 
+        self.intermediate_signals["controller_state"] = self.controller_state
+
         if odor_intensity > 0.2:
             self.controller_state = ControllerState.TURNING
         if self.controller_state == ControllerState.SEEKING_ODOR:
             odor_taxis_command = self.get_odor_taxis(obs)
-            combined_command = self.pillar_avoidance(obs, odor_taxis_command)
 
+            self.intermediate_signals["odor_taxis_drive"] = odor_taxis_command.get_drive()
+
+            combined_command = self.pillar_avoidance(obs, odor_taxis_command)
             drive = combined_command.get_drive()
         else:
             drive = self.return_to_home()

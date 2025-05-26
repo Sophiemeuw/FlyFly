@@ -46,7 +46,7 @@ jobs:
           PYOPENGL_PLATFORM: egl
         run: |
           source .venv/bin/activate
-          python3 run_simulation.py --level=${{ matrix.level }} --seed=${{ matrix.seed }} --progress --max-steps 100000 submission/
+          python3 run_simulation.py --level=${{ matrix.level }} --seed=${{ matrix.seed }} --progress --max-steps 100000 --save-obs submission/
 
       - name: Upload simulation outputs
         uses: actions/upload-artifact@v4
